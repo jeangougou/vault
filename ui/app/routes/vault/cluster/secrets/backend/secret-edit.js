@@ -1,22 +1,23 @@
 import { set } from '@ember/object';
-import { hash } from 'rsvp';
+import { hash, resolve } from 'rsvp';
 import Route from '@ember/routing/route';
 import utils from 'vault/lib/key-utils';
 import UnloadModelRoute from 'vault/mixins/unload-model-route';
+import DS from 'ember-data';
 
 export default Route.extend(UnloadModelRoute, {
   capabilities(secret) {
     const { backend } = this.paramsFor('vault.cluster.secrets.backend');
     let backendModel = this.modelFor('vault.cluster.secrets.backend');
     let backendType = backendModel.get('engineType');
-    let version = backendModel.get('options.version');
+    if (backendType === 'kv' || backendType === 'cubbyhole' || backendType === 'generic') {
+      return resolve({});
+    }
     let path;
     if (backendType === 'transit') {
       path = backend + '/keys/' + secret;
     } else if (backendType === 'ssh' || backendType === 'aws') {
       path = backend + '/roles/' + secret;
-    } else if (version && version === 2) {
-      path = backend + '/data/' + secret;
     } else {
       path = backend + '/' + secret;
     }
@@ -63,6 +64,7 @@ export default Route.extend(UnloadModelRoute, {
   model(params) {
     let { secret } = params;
     const { backend } = this.paramsFor('vault.cluster.secrets.backend');
+    let backendModel = this.modelFor('vault.cluster.secrets.backend', backend);
     const modelType = this.modelType(backend, secret);
 
     if (!secret) {
@@ -72,7 +74,50 @@ export default Route.extend(UnloadModelRoute, {
       secret = secret.replace('cert/', '');
     }
     return hash({
-      secret: this.store.queryRecord(modelType, { id: secret, backend }),
+      secret: this.store
+        .queryRecord(modelType, { id: secret, backend })
+        .then(secretModel => {
+          if (modelType === 'secret-v2') {
+            let targetVersion = parseInt(params.version || secretModel.currentVersion, 10);
+            let version = secretModel.versions.findBy('version', targetVersion);
+            // 404 if there's no version
+            if (!version) {
+              let error = new DS.AdapterError();
+              set(error, 'httpStatus', 404);
+              throw error;
+            }
+            secretModel.set('engine', backendModel);
+
+            return version.reload().then(() => {
+              secretModel.set('selectedVersion', version);
+              return secretModel;
+            });
+          }
+          return secretModel;
+        })
+        .catch(err => {
+          //don't have access to the metadata, so we'll make
+          //a stub metadata model and try to load the version
+          if (modelType === 'secret-v2' && err.httpStatus === 403) {
+            let secretModel = this.store.createRecord('secret-v2');
+            secretModel.setProperties({
+              engine: backendModel,
+              id: secret,
+              // so we know it's a stub model and won't be saving it
+              // because we don't have access to that endpoint
+              isStub: true,
+            });
+            let targetVersion = params.version ? parseInt(params.version, 10) : null;
+            let versionId = targetVersion ? [backend, secret, targetVersion] : [backend, secret];
+            return this.store
+              .findRecord('secret-v2-version', JSON.stringify(versionId), { reload: true })
+              .then(versionModel => {
+                secretModel.set('selectedVersion', versionModel);
+                return secretModel;
+              });
+          }
+          throw err;
+        }),
       capabilities: this.capabilities(secret),
     });
   },
@@ -120,14 +165,24 @@ export default Route.extend(UnloadModelRoute, {
     },
 
     willTransition(transition) {
-      if (this.get('hasChanges')) {
+      let { mode, model } = this.controller;
+      let version = model.get('selectedVersion');
+      let changed = model.changedAttributes();
+      let changedKeys = Object.keys(changed);
+      // until we have time to move `backend` on a v1 model to a relationship,
+      // it's going to dirty the model state, so we need to look for it
+      // and explicity ignore it here
+      if (
+        (mode !== 'show' && (changedKeys.length && changedKeys[0] !== 'backend')) ||
+        (mode !== 'show' && version && Object.keys(version.changedAttributes()).length)
+      ) {
         if (
           window.confirm(
             'You have unsaved changes. Navigating away will discard these changes. Are you sure you want to discard your changes?'
           )
         ) {
+          version && version.rollbackAttributes();
           this.unloadModel();
-          this.set('hasChanges', false);
           return true;
         } else {
           transition.abort();
@@ -135,10 +190,6 @@ export default Route.extend(UnloadModelRoute, {
         }
       }
       return this._super(...arguments);
-    },
-
-    hasDataChanges(hasChanges) {
-      this.set('hasChanges', hasChanges);
     },
   },
 });

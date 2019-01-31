@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/vault/helper/identity"
 	"github.com/hashicorp/vault/helper/namespace"
 	"github.com/hashicorp/vault/helper/storagepacker"
+	"github.com/hashicorp/vault/helper/strutil"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 )
@@ -31,21 +32,29 @@ func (c *Core) IdentityStore() *IdentityStore {
 	return c.identityStore
 }
 
-// NewIdentityStore creates a new identity store
-func NewIdentityStore(ctx context.Context, core *Core, config *logical.BackendConfig, logger log.Logger) (*IdentityStore, error) {
+func (i *IdentityStore) resetDB(ctx context.Context) error {
 	var err error
 
-	// Create a new in-memory database for the identity store
-	db, err := memdb.NewMemDB(identityStoreSchema())
+	i.db, err = memdb.NewMemDB(identityStoreSchema(!i.disableLowerCasedNames))
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to create memdb for identity store: {{err}}", err)
+		return err
 	}
 
+	return nil
+}
+
+func NewIdentityStore(ctx context.Context, core *Core, config *logical.BackendConfig, logger log.Logger) (*IdentityStore, error) {
 	iStore := &IdentityStore{
 		view:   config.StorageView,
-		db:     db,
 		logger: logger,
 		core:   core,
+	}
+
+	// Create a memdb instance, which by default, operates on lower cased
+	// identity names
+	err := iStore.resetDB(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	entitiesPackerLogger := iStore.logger.Named("storagepacker").Named("entities")
@@ -398,6 +407,7 @@ func (i *IdentityStore) entityByAliasFactorsInTxn(txn *memdb.Txn, mountAccessor,
 func (i *IdentityStore) CreateOrFetchEntity(ctx context.Context, alias *logical.Alias) (*identity.Entity, error) {
 	var entity *identity.Entity
 	var err error
+	var update bool
 
 	if alias == nil {
 		return nil, fmt.Errorf("alias is nil")
@@ -420,12 +430,12 @@ func (i *IdentityStore) CreateOrFetchEntity(ctx context.Context, alias *logical.
 		return nil, fmt.Errorf("mount accessor %q is not a mount of type %q", alias.MountAccessor, alias.MountType)
 	}
 
-	// Check if an entity already exists for the given alais
+	// Check if an entity already exists for the given alias
 	entity, err = i.entityByAliasFactors(alias.MountAccessor, alias.Name, false)
 	if err != nil {
 		return nil, err
 	}
-	if entity != nil {
+	if entity != nil && changedAliasIndex(entity, alias) == -1 {
 		return entity, nil
 	}
 
@@ -437,40 +447,50 @@ func (i *IdentityStore) CreateOrFetchEntity(ctx context.Context, alias *logical.
 	defer txn.Abort()
 
 	// Check if an entity was created before acquiring the lock
-	entity, err = i.entityByAliasFactorsInTxn(txn, alias.MountAccessor, alias.Name, false)
+	entity, err = i.entityByAliasFactorsInTxn(txn, alias.MountAccessor, alias.Name, true)
 	if err != nil {
 		return nil, err
 	}
 	if entity != nil {
-		return entity, nil
+		idx := changedAliasIndex(entity, alias)
+		if idx == -1 {
+			return entity, nil
+		}
+		a := entity.Aliases[idx]
+		a.Metadata = alias.Metadata
+		a.LastUpdateTime = ptypes.TimestampNow()
+
+		update = true
 	}
 
-	entity = new(identity.Entity)
-	err = i.sanitizeEntity(ctx, entity)
-	if err != nil {
-		return nil, err
-	}
+	if !update {
+		entity = new(identity.Entity)
+		err = i.sanitizeEntity(ctx, entity)
+		if err != nil {
+			return nil, err
+		}
 
-	// Create a new alias
-	newAlias := &identity.Alias{
-		CanonicalID:   entity.ID,
-		Name:          alias.Name,
-		MountAccessor: alias.MountAccessor,
-		Metadata:      alias.Metadata,
-		MountPath:     mountValidationResp.MountPath,
-		MountType:     mountValidationResp.MountType,
-	}
+		// Create a new alias
+		newAlias := &identity.Alias{
+			CanonicalID:   entity.ID,
+			Name:          alias.Name,
+			MountAccessor: alias.MountAccessor,
+			Metadata:      alias.Metadata,
+			MountPath:     mountValidationResp.MountPath,
+			MountType:     mountValidationResp.MountType,
+		}
 
-	err = i.sanitizeAlias(ctx, newAlias)
-	if err != nil {
-		return nil, err
-	}
+		err = i.sanitizeAlias(ctx, newAlias)
+		if err != nil {
+			return nil, err
+		}
 
-	i.logger.Debug("creating a new entity", "alias", newAlias)
+		i.logger.Debug("creating a new entity", "alias", newAlias)
 
-	// Append the new alias to the new entity
-	entity.Aliases = []*identity.Alias{
-		newAlias,
+		// Append the new alias to the new entity
+		entity.Aliases = []*identity.Alias{
+			newAlias,
+		}
 	}
 
 	// Update MemDB and persist entity object
@@ -482,4 +502,18 @@ func (i *IdentityStore) CreateOrFetchEntity(ctx context.Context, alias *logical.
 	txn.Commit()
 
 	return entity, nil
+}
+
+// changedAliasIndex searches an entity for changed alias metadata.
+//
+// If a match is found, the changed alias's index is returned. If no alias
+// names match or no metadata is different, -1 is returned.
+func changedAliasIndex(entity *identity.Entity, alias *logical.Alias) int {
+	for i, a := range entity.Aliases {
+		if a.Name == alias.Name && !strutil.EqualStringMaps(a.Metadata, alias.Metadata) {
+			return i
+		}
+	}
+
+	return -1
 }

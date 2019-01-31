@@ -1,7 +1,8 @@
 ---
 layout: "api"
 page_title: "TLS Certificate - Auth Methods - HTTP API"
-sidebar_current: "docs-http-auth-cert"
+sidebar_title: "TLS Certificates"
+sidebar_current: "api-http-auth-cert"
 description: |-
   This is the API documentation for the Vault TLS Certificate authentication
   method.
@@ -162,6 +163,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
     http://127.0.0.1:8200/v1/auth/cert/certs
+```
 
 ### Sample Response
 

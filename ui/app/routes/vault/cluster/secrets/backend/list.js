@@ -63,16 +63,17 @@ export default Route.extend({
           responsePath: 'data.keys',
           page: params.page,
           pageFilter: params.pageFilter,
-          size: 100,
         })
         .then(model => {
           this.set('has404', false);
           return model;
         })
         .catch(err => {
+          // if we're at the root we don't want to throw
           if (backendModel && err.httpStatus === 404 && secret === '') {
             return [];
           } else {
+            // else we're throwing and dealing with this in the error action
             throw err;
           }
         }),
@@ -109,6 +110,11 @@ export default Route.extend({
     let { backend } = this.paramsFor('vault.cluster.secrets.backend');
     let backendModel = this.store.peekRecord('secret-engine', backend);
     let has404 = this.get('has404');
+    // only clear store cache if this is a new model
+    if (secret !== controller.get('baseKey.id')) {
+      this.store.clearAllDatasets();
+    }
+
     controller.set('hasModel', true);
     controller.setProperties({
       model,
@@ -142,20 +148,27 @@ export default Route.extend({
 
   actions: {
     error(error, transition) {
-      const { secret } = this.paramsFor(this.routeName);
-      const { backend } = this.paramsFor('vault.cluster.secrets.backend');
+      let { secret } = this.paramsFor(this.routeName);
+      let { backend } = this.paramsFor('vault.cluster.secrets.backend');
+      let is404 = error.httpStatus === 404;
+      let hasModel = this.controllerFor(this.routeName).get('hasModel');
 
+      // this will occur if we've deleted something,
+      // and navigate to its parent and the parent doesn't exist -
+      // this if often the case with nested keys in kv-like engines
+      if (transition.data.isDeletion && is404) {
+        throw error;
+      }
       set(error, 'secret', secret);
       set(error, 'isRoot', true);
       set(error, 'backend', backend);
-      const hasModel = this.controllerFor(this.routeName).get('hasModel');
       // only swallow the error if we have a previous model
-      if (hasModel && error.httpStatus === 404) {
+      if (hasModel && is404) {
         this.set('has404', true);
         transition.abort();
-      } else {
-        return true;
+        return false;
       }
+      return true;
     },
 
     willTransition(transition) {
@@ -166,8 +179,8 @@ export default Route.extend({
       return true;
     },
     reload() {
-      this.refresh();
       this.store.clearAllDatasets();
+      this.refresh();
     },
   },
 });

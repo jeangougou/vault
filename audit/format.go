@@ -131,9 +131,11 @@ func (f *AuditFormatter) FormatRequest(ctx context.Context, w io.Writer, config 
 			TokenPolicies:             auth.TokenPolicies,
 			IdentityPolicies:          auth.IdentityPolicies,
 			ExternalNamespacePolicies: auth.ExternalNamespacePolicies,
+			NoDefaultPolicy:           auth.NoDefaultPolicy,
 			Metadata:                  auth.Metadata,
 			EntityID:                  auth.EntityID,
 			RemainingUses:             req.ClientTokenRemainingUses,
+			TokenType:                 auth.TokenType.String(),
 		},
 
 		Request: AuditRequest{
@@ -302,8 +304,11 @@ func (f *AuditFormatter) FormatResponse(ctx context.Context, w io.Writer, config
 			TokenPolicies:             resp.Auth.TokenPolicies,
 			IdentityPolicies:          resp.Auth.IdentityPolicies,
 			ExternalNamespacePolicies: resp.Auth.ExternalNamespacePolicies,
+			NoDefaultPolicy:           resp.Auth.NoDefaultPolicy,
 			Metadata:                  resp.Auth.Metadata,
 			NumUses:                   resp.Auth.NumUses,
+			EntityID:                  resp.Auth.EntityID,
+			TokenType:                 resp.Auth.TokenType.String(),
 		}
 	}
 
@@ -334,16 +339,18 @@ func (f *AuditFormatter) FormatResponse(ctx context.Context, w io.Writer, config
 		Type:  "response",
 		Error: errString,
 		Auth: AuditAuth{
+			ClientToken:               auth.ClientToken,
+			Accessor:                  auth.Accessor,
 			DisplayName:               auth.DisplayName,
 			Policies:                  auth.Policies,
 			TokenPolicies:             auth.TokenPolicies,
 			IdentityPolicies:          auth.IdentityPolicies,
 			ExternalNamespacePolicies: auth.ExternalNamespacePolicies,
+			NoDefaultPolicy:           auth.NoDefaultPolicy,
 			Metadata:                  auth.Metadata,
-			ClientToken:               auth.ClientToken,
-			Accessor:                  auth.Accessor,
 			RemainingUses:             req.ClientTokenRemainingUses,
 			EntityID:                  auth.EntityID,
+			TokenType:                 auth.TokenType.String(),
 		},
 
 		Request: AuditRequest{
@@ -433,10 +440,12 @@ type AuditAuth struct {
 	TokenPolicies             []string            `json:"token_policies,omitempty"`
 	IdentityPolicies          []string            `json:"identity_policies,omitempty"`
 	ExternalNamespacePolicies map[string][]string `json:"external_namespace_policies,omitempty"`
+	NoDefaultPolicy           bool                `json:"no_default_policy,omitempty"`
 	Metadata                  map[string]string   `json:"metadata"`
 	NumUses                   int                 `json:"num_uses,omitempty"`
 	RemainingUses             int                 `json:"remaining_uses,omitempty"`
 	EntityID                  string              `json:"entity_id"`
+	TokenType                 string              `json:"token_type"`
 }
 
 type AuditSecret struct {

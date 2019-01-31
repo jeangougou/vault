@@ -14,6 +14,9 @@ import (
 // StrListContainsGlob looks for a string in a list of strings and allows
 // globs.
 func StrListContainsGlob(haystack []string, needle string) bool {
+	if len(haystack) == 0 {
+		return false
+	}
 	for _, item := range haystack {
 		if glob.Glob(item, needle) {
 			return true
@@ -24,6 +27,9 @@ func StrListContainsGlob(haystack []string, needle string) bool {
 
 // StrListContains looks for a string in a list of strings.
 func StrListContains(haystack []string, needle string) bool {
+	if len(haystack) == 0 {
+		return false
+	}
 	for _, item := range haystack {
 		if item == needle {
 			return true
@@ -239,6 +245,22 @@ func RemoveDuplicates(items []string, lowercase bool) []string {
 	return items
 }
 
+// RemoveEmpty removes empty elements from a slice of
+// strings
+func RemoveEmpty(items []string) []string {
+	if len(items) == 0 {
+		return items
+	}
+	itemsSlice := make([]string, 0, len(items))
+	for _, item := range items {
+		if item == "" {
+			continue
+		}
+		itemsSlice = append(itemsSlice, item)
+	}
+	return itemsSlice
+}
+
 // EquivalentSlices checks whether the given string sets are equivalent, as in,
 // they contain the same values.
 func EquivalentSlices(a, b []string) bool {
@@ -278,6 +300,24 @@ func EquivalentSlices(a, b []string) bool {
 
 	for i := range sortedA {
 		if sortedA[i] != sortedB[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// EqualStringMaps tests whether two map[string]string objects are equal.
+// Equal means both maps have the same sets of keys and values. This function
+// is 6-10x faster than a call to reflect.DeepEqual().
+func EqualStringMaps(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for k := range a {
+		v, ok := b[k]
+		if !ok || a[k] != v {
 			return false
 		}
 	}

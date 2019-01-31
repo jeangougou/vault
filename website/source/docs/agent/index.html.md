@@ -1,6 +1,7 @@
 ---
 layout: "docs"
 page_title: "Vault Agent"
+sidebar_title: "Vault Agent"
 sidebar_current: "docs-agent"
 description: |-
   Vault Agent is a client-side daemon that can be used to perform some Vault
@@ -46,6 +47,7 @@ auto_auth {
         method "aws" {
                 mount_path = "auth/aws-subaccount"
                 config = {
+                        type = "iam"
                         role = "foobar"
                 }
         }

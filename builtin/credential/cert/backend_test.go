@@ -21,14 +21,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-test/deep"
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
 	log "github.com/hashicorp/go-hclog"
+	sockaddr "github.com/hashicorp/go-sockaddr"
 	"github.com/hashicorp/vault/api"
 	vaulthttp "github.com/hashicorp/vault/http"
 
-	"github.com/hashicorp/go-rootcerts"
+	rootcerts "github.com/hashicorp/go-rootcerts"
 	"github.com/hashicorp/vault/builtin/logical/pki"
 	"github.com/hashicorp/vault/helper/certutil"
+	"github.com/hashicorp/vault/helper/tokenhelper"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 	logicaltest "github.com/hashicorp/vault/logical/testing"
@@ -840,7 +843,7 @@ func TestBackend_CertWrites(t *testing.T) {
 	}
 
 	tc := logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "aaa", ca1, "foo", allowed{}, false),
 			testAccStepCert(t, "bbb", ca2, "foo", allowed{}, false),
@@ -863,7 +866,7 @@ func TestBackend_basic_CA(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{}, false),
 			testAccStepLogin(t, connState),
@@ -898,7 +901,7 @@ func TestBackend_Basic_CRLs(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCertNoLease(t, "web", ca, "foo"),
 			testAccStepLoginDefaultLease(t, connState),
@@ -923,7 +926,7 @@ func TestBackend_basic_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{}, false),
 			testAccStepLogin(t, connState),
@@ -948,7 +951,7 @@ func TestBackend_common_name_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{}, false),
 			testAccStepLogin(t, connState),
@@ -977,7 +980,7 @@ func TestBackend_ext_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{ext: "2.1.1.1:A UTF8String Extension"}, false),
 			testAccStepLogin(t, connState),
@@ -1032,7 +1035,7 @@ func TestBackend_dns_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{dns: "example.com"}, false),
 			testAccStepLogin(t, connState),
@@ -1063,7 +1066,7 @@ func TestBackend_email_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{emails: "valid@example.com"}, false),
 			testAccStepLogin(t, connState),
@@ -1094,7 +1097,7 @@ func TestBackend_organizationalUnit_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{organizational_units: "engineering"}, false),
 			testAccStepLogin(t, connState),
@@ -1123,7 +1126,7 @@ func TestBackend_uri_singleCert(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "web", ca, "foo", allowed{uris: "spiffe://example.com/*"}, false),
 			testAccStepLogin(t, connState),
@@ -1151,7 +1154,7 @@ func TestBackend_mixed_constraints(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepCert(t, "1unconstrained", ca, "foo", allowed{}, false),
 			testAccStepCert(t, "2matching", ca, "foo", allowed{names: "*.example.com,whatever"}, false),
@@ -1172,7 +1175,7 @@ func TestBackend_untrusted(t *testing.T) {
 		t.Fatalf("error testing connection state: %v", err)
 	}
 	logicaltest.Test(t, logicaltest.TestCase{
-		Backend: testFactory(t),
+		CredentialBackend: testFactory(t),
 		Steps: []logicaltest.TestStep{
 			testAccStepLoginInvalid(t, connState),
 		},
@@ -1786,5 +1789,70 @@ func Test_Renew(t *testing.T) {
 	}
 	if !resp.IsError() {
 		t.Fatal("expected error")
+	}
+}
+
+func TestBackend_CertUpgrade(t *testing.T) {
+	s := &logical.InmemStorage{}
+
+	config := logical.TestBackendConfig()
+	config.StorageView = s
+
+	ctx := context.Background()
+
+	b := Backend()
+	if b == nil {
+		t.Fatalf("failed to create backend")
+	}
+	if err := b.Setup(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+
+	type B struct {
+		Policies   []string
+		TTL        time.Duration
+		MaxTTL     time.Duration
+		Period     time.Duration
+		BoundCIDRs []*sockaddr.SockAddrMarshaler
+	}
+
+	foo := &B{
+		Policies:   []string{"foo"},
+		TTL:        time.Second,
+		MaxTTL:     time.Second,
+		Period:     time.Second,
+		BoundCIDRs: []*sockaddr.SockAddrMarshaler{&sockaddr.SockAddrMarshaler{SockAddr: sockaddr.MustIPAddr("127.0.0.1")}},
+	}
+
+	entry, err := logical.StorageEntryJSON("cert/foo", foo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Put(ctx, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	certEntry, err := b.Cert(ctx, s, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exp := &CertEntry{
+		TokenParams: tokenhelper.TokenParams{
+			Policies:   []string{"foo"},
+			TTL:        time.Second,
+			MaxTTL:     time.Second,
+			Period:     time.Second,
+			BoundCIDRs: []*sockaddr.SockAddrMarshaler{&sockaddr.SockAddrMarshaler{SockAddr: sockaddr.MustIPAddr("127.0.0.1")}},
+		},
+		OldPolicies:   nil,
+		OldTTL:        0,
+		OldMaxTTL:     0,
+		OldPeriod:     0,
+		OldBoundCIDRs: nil,
+	}
+	if diff := deep.Equal(certEntry, exp); diff != nil {
+		t.Fatal(diff)
 	}
 }

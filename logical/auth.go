@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hashicorp/go-sockaddr"
+	sockaddr "github.com/hashicorp/go-sockaddr"
 )
 
 // Auth is the resulting authentication information that is part of
@@ -37,6 +37,11 @@ type Auth struct {
 	// ExternalNamespacePolicies represent the policies authorized from
 	// different namespaces indexed by respective namespace identifiers
 	ExternalNamespacePolicies map[string][]string `json:"external_namespace_policies" mapstructure:"external_namespace_policies" structs:"external_namespace_policies"`
+
+	// Indicates that the default policy should not be added by core when
+	// creating a token. The default policy will still be added if it's
+	// explicitly defined.
+	NoDefaultPolicy bool `json:"no_default_policy" mapstructure:"no_default_policy" structs:"no_default_policy"`
 
 	// Metadata is used to attach arbitrary string-type metadata to
 	// an authenticated user. This metadata will be outputted into the
@@ -89,6 +94,9 @@ type Auth struct {
 	// change the perceived path of the lease, even though they don't change
 	// the request path itself.
 	CreationPath string `json:"creation_path"`
+
+	// TokenType is the type of token being requested
+	TokenType TokenType `json:"token_type"`
 }
 
 func (a *Auth) GoString() string {

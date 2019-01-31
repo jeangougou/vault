@@ -1,7 +1,8 @@
 ---
 layout: "api"
 page_title: "Google Cloud - Secrets Engines - HTTP API"
-sidebar_current: "docs-http-secret-gcp"
+sidebar_title: "Google Cloud"
+sidebar_current: "api-http-secret-gcp"
 description: |-
   This is the API documentation for the Vault Google Cloud secrets engine.
 ---
@@ -124,7 +125,7 @@ generated under this roleset.**
 See [bindings format docs](/docs/secrets/gcp/index.html#roleset-bindings) for more information.
 
 ```hcl
-resource "//cloudresourcemanager.googleapis.com/project/mygcpproject" {
+resource "//cloudresourcemanager.googleapis.com/projects/mygcpproject" {
   roles = [
     "roles/viewer"
   ],

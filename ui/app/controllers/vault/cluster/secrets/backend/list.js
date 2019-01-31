@@ -3,8 +3,9 @@ import { inject as service } from '@ember/service';
 import Controller from '@ember/controller';
 import utils from 'vault/lib/key-utils';
 import BackendCrumbMixin from 'vault/mixins/backend-crumb';
+import WithNavToNearestAncestor from 'vault/mixins/with-nav-to-nearest-ancestor';
 
-export default Controller.extend(BackendCrumbMixin, {
+export default Controller.extend(BackendCrumbMixin, WithNavToNearestAncestor, {
   flashMessages: service(),
   queryParams: ['page', 'pageFilter', 'tab'],
 
@@ -65,11 +66,14 @@ export default Controller.extend(BackendCrumbMixin, {
         });
     },
 
-    delete(item) {
+    delete(item, type) {
       const name = item.id;
       item.destroyRecord().then(() => {
-        this.send('reload');
         this.get('flashMessages').success(`${name} was successfully deleted.`);
+        this.send('reload');
+        if (type === 'secret') {
+          this.navToNearestAncestor.perform(name);
+        }
       });
     },
   },
