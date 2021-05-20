@@ -1,14 +1,14 @@
 <NavHeader data-test-header-without-nav as |Nav|>
   <Nav.home>
     <HomeLink @class="navbar-item splash-page-logo">
-      {{partial "svg/vault-edition-logo"}}
+      <LogoEdition />
     </HomeLink>
   </Nav.home>
 </NavHeader>
 <section class="section">
   <div class="container">
     {{#if (eq model.httpStatus 404)}}
-      {{not-found model=model}}
+      <NotFound @model={{model}} />
     {{else}}
       <PageHeader as |p|>
         <p.levelLeft>

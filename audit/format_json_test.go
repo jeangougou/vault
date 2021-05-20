@@ -4,18 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"errors"
-
-	"fmt"
-
-	"github.com/hashicorp/vault/helper/jsonutil"
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/helper/salt"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/helper/jsonutil"
+	"github.com/hashicorp/vault/sdk/helper/salt"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func TestFormatJSON_formatRequest(t *testing.T) {
@@ -29,6 +27,7 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 
 	expectedResultStr := fmt.Sprintf(testFormatJSONReqBasicStrFmt, salter.GetIdentifiedHMAC("foo"))
 
+	issueTime, _ := time.Parse(time.RFC3339, "2020-05-28T13:40:18-05:00")
 	cases := map[string]struct {
 		Auth        *logical.Auth
 		Req         *logical.Request
@@ -41,9 +40,14 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 				ClientToken:     "foo",
 				Accessor:        "bar",
 				DisplayName:     "testtoken",
+				EntityID:        "foobarentity",
 				NoDefaultPolicy: true,
 				Policies:        []string{"root"},
 				TokenType:       logical.TokenTypeService,
+				LeaseOptions: logical.LeaseOptions{
+					TTL:       time.Hour * 4,
+					IssueTime: issueTime,
+				},
 			},
 			&logical.Request{
 				Operation: logical.UpdateOperation,
@@ -55,7 +59,7 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 					TTL: 60 * time.Second,
 				},
 				Headers: map[string][]string{
-					"foo": []string{"bar"},
+					"foo": {"bar"},
 				},
 			},
 			errors.New("this is an error"),
@@ -66,10 +70,15 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 			&logical.Auth{
 				ClientToken:     "foo",
 				Accessor:        "bar",
+				EntityID:        "foobarentity",
 				DisplayName:     "testtoken",
 				NoDefaultPolicy: true,
 				Policies:        []string{"root"},
 				TokenType:       logical.TokenTypeService,
+				LeaseOptions: logical.LeaseOptions{
+					TTL:       time.Hour * 4,
+					IssueTime: issueTime,
+				},
 			},
 			&logical.Request{
 				Operation: logical.UpdateOperation,
@@ -81,7 +90,7 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 					TTL: 60 * time.Second,
 				},
 				Headers: map[string][]string{
-					"foo": []string{"bar"},
+					"foo": {"bar"},
 				},
 			},
 			errors.New("this is an error"),
@@ -101,7 +110,7 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 		config := FormatterConfig{
 			HMACAccessor: false,
 		}
-		in := &LogInput{
+		in := &logical.LogInput{
 			Auth:     tc.Auth,
 			Request:  tc.Req,
 			OuterErr: tc.Err,
@@ -114,14 +123,14 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 			t.Fatalf("no prefix: %s \n log: %s\nprefix: %s", name, expectedResultStr, tc.Prefix)
 		}
 
-		var expectedjson = new(AuditRequestEntry)
+		expectedjson := new(AuditRequestEntry)
 
 		if err := jsonutil.DecodeJSON([]byte(expectedResultStr), &expectedjson); err != nil {
 			t.Fatalf("bad json: %s", err)
 		}
-		expectedjson.Request.Namespace = AuditNamespace{ID: "root"}
+		expectedjson.Request.Namespace = &AuditNamespace{ID: "root"}
 
-		var actualjson = new(AuditRequestEntry)
+		actualjson := new(AuditRequestEntry)
 		if err := jsonutil.DecodeJSON([]byte(buf.String())[len(tc.Prefix):], &actualjson); err != nil {
 			t.Fatalf("bad json: %s", err)
 		}
@@ -141,5 +150,5 @@ func TestFormatJSON_formatRequest(t *testing.T) {
 	}
 }
 
-const testFormatJSONReqBasicStrFmt = `{"time":"2015-08-05T13:45:46Z","type":"request","auth":{"client_token":"%s","accessor":"bar","display_name":"testtoken","policies":["root"],"no_default_policy":true,"metadata":null,"entity_id":"","token_type":"service"},"request":{"operation":"update","path":"/foo","data":null,"wrap_ttl":60,"remote_address":"127.0.0.1","headers":{"foo":["bar"]}},"error":"this is an error"}
+const testFormatJSONReqBasicStrFmt = `{"time":"2015-08-05T13:45:46Z","type":"request","auth":{"client_token":"%s","accessor":"bar","display_name":"testtoken","policies":["root"],"no_default_policy":true,"metadata":null,"entity_id":"foobarentity","token_type":"service", "token_ttl": 14400, "token_issue_time": "2020-05-28T13:40:18-05:00"},"request":{"operation":"update","path":"/foo","data":null,"wrap_ttl":60,"remote_address":"127.0.0.1","headers":{"foo":["bar"]}},"error":"this is an error"}
 `

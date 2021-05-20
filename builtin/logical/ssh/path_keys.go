@@ -6,8 +6,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 type sshHostKey struct {
@@ -18,11 +18,11 @@ func pathKeys(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: "keys/" + framework.GenericNameRegex("key_name"),
 		Fields: map[string]*framework.FieldSchema{
-			"key_name": &framework.FieldSchema{
+			"key_name": {
 				Type:        framework.TypeString,
 				Description: "[Required] Name of the key",
 			},
-			"key": &framework.FieldSchema{
+			"key": {
 				Type:        framework.TypeString,
 				Description: "[Required] SSH private key with super user privileges in host",
 			},

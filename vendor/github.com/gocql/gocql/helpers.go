@@ -26,6 +26,8 @@ func goType(t TypeInfo) reflect.Type {
 		return reflect.TypeOf(*new(string))
 	case TypeBigInt, TypeCounter:
 		return reflect.TypeOf(*new(int64))
+	case TypeTime:
+		return reflect.TypeOf(*new(time.Duration))
 	case TypeTimestamp:
 		return reflect.TypeOf(*new(time.Time))
 	case TypeBlob:
@@ -83,14 +85,24 @@ func getCassandraBaseType(name string) Type {
 		return TypeBoolean
 	case "counter":
 		return TypeCounter
+	case "date":
+		return TypeDate
 	case "decimal":
 		return TypeDecimal
 	case "double":
 		return TypeDouble
+	case "duration":
+		return TypeDuration
 	case "float":
 		return TypeFloat
 	case "int":
 		return TypeInt
+	case "smallint":
+		return TypeSmallInt
+	case "tinyint":
+		return TypeTinyInt
+	case "time":
+		return TypeTime
 	case "timestamp":
 		return TypeTimestamp
 	case "uuid":
@@ -191,6 +203,20 @@ func splitCompositeTypes(name string) []string {
 	return parts
 }
 
+func apacheToCassandraType(t string) string {
+	t = strings.Replace(t, apacheCassandraTypePrefix, "", -1)
+	t = strings.Replace(t, "(", "<", -1)
+	t = strings.Replace(t, ")", ">", -1)
+	types := strings.FieldsFunc(t, func(r rune) bool {
+		return r == '<' || r == '>' || r == ','
+	})
+	for _, typ := range types {
+		t = strings.Replace(t, typ, getApacheCassandraType(typ).String(), -1)
+	}
+	// This is done so it exactly matches what Cassandra returns
+	return strings.Replace(t, ",", ", ", -1)
+}
+
 func getApacheCassandraType(class string) Type {
 	switch strings.TrimPrefix(class, apacheCassandraTypePrefix) {
 	case "AsciiType":
@@ -215,6 +241,8 @@ func getApacheCassandraType(class string) Type {
 		return TypeSmallInt
 	case "ByteType":
 		return TypeTinyInt
+	case "TimeType":
+		return TypeTime
 	case "DateType", "TimestampType":
 		return TypeTimestamp
 	case "UUIDType", "LexicalUUIDType":
@@ -240,15 +268,6 @@ func getApacheCassandraType(class string) Type {
 	default:
 		return TypeCustom
 	}
-}
-
-func typeCanBeNull(typ TypeInfo) bool {
-	switch typ.(type) {
-	case CollectionType, UDTTypeInfo, TupleTypeInfo:
-		return false
-	}
-
-	return true
 }
 
 func (r *RowData) rowMap(m map[string]interface{}) {
@@ -344,7 +363,7 @@ func (iter *Iter) SliceMap() ([]map[string]interface{}, error) {
 //	iter := session.Query(`SELECT * FROM mytable`).Iter()
 //	for {
 //		// New map each iteration
-//		row = make(map[string]interface{})
+//		row := make(map[string]interface{})
 //		if !iter.MapScan(row) {
 //			break
 //		}

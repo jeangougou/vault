@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 	otplib "github.com/pquerna/otp"
 	totplib "github.com/pquerna/otp/totp"
 )
@@ -16,11 +15,11 @@ func pathCode(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: "code/" + framework.GenericNameWithAtRegex("name"),
 		Fields: map[string]*framework.FieldSchema{
-			"name": &framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
 				Description: "Name of the key.",
 			},
-			"code": &framework.FieldSchema{
+			"code": {
 				Type:        framework.TypeString,
 				Description: "TOTP code to be validated.",
 			},
@@ -98,7 +97,7 @@ func (b *backend) pathValidateCode(ctx context.Context, req *logical.Request, da
 		Algorithm: key.Algorithm,
 	})
 	if err != nil && err != otplib.ErrValidateInputInvalidLength {
-		return logical.ErrorResponse("an error occured while validating the code"), err
+		return logical.ErrorResponse("an error occurred while validating the code"), err
 	}
 
 	// Take the key skew, add two for behind and in front, and multiple that by
@@ -108,7 +107,7 @@ func (b *backend) pathValidateCode(ctx context.Context, req *logical.Request, da
 			int64(key.Period)*
 			int64((2+key.Skew))))
 	if err != nil {
-		return nil, errwrap.Wrapf("error adding code to used cache: {{err}}", err)
+		return nil, fmt.Errorf("error adding code to used cache: %w", err)
 	}
 
 	return &logical.Response{
@@ -121,6 +120,7 @@ func (b *backend) pathValidateCode(ctx context.Context, req *logical.Request, da
 const pathCodeHelpSyn = `
 Request time-based one-time use password or validate a password for a certain key .
 `
+
 const pathCodeHelpDesc = `
 This path generates and validates time-based one-time use passwords for a certain key. 
 

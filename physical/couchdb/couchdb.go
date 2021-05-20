@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/errwrap"
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
 	log "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/vault/physical"
+	"github.com/hashicorp/vault/sdk/physical"
 )
 
 // CouchDBBackend allows the management of couchdb users
@@ -28,9 +28,11 @@ type CouchDBBackend struct {
 }
 
 // Verify CouchDBBackend satisfies the correct interfaces
-var _ physical.Backend = (*CouchDBBackend)(nil)
-var _ physical.PseudoTransactional = (*CouchDBBackend)(nil)
-var _ physical.PseudoTransactional = (*TransactionalCouchDBBackend)(nil)
+var (
+	_ physical.Backend             = (*CouchDBBackend)(nil)
+	_ physical.PseudoTransactional = (*CouchDBBackend)(nil)
+	_ physical.PseudoTransactional = (*TransactionalCouchDBBackend)(nil)
+)
 
 type couchDBClient struct {
 	endpoint string
@@ -86,7 +88,10 @@ func (m *couchDBClient) put(e couchDBEntry) error {
 		return err
 	}
 	req.SetBasicAuth(m.username, m.password)
-	_, err = m.Client.Do(req)
+	resp, err := m.Client.Do(req)
+	if err == nil {
+		resp.Body.Close()
+	}
 
 	return err
 }

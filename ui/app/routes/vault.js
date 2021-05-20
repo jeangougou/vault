@@ -3,12 +3,13 @@ import { Promise } from 'rsvp';
 import { inject as service } from '@ember/service';
 import Route from '@ember/routing/route';
 import Ember from 'ember';
+/* eslint-disable ember/no-ember-testing-in-module-scope */
 const SPLASH_DELAY = Ember.testing ? 0 : 300;
 
 export default Route.extend({
   version: service(),
   beforeModel() {
-    return this.get('version').fetchVersion();
+    return this.version.fetchVersion();
   },
   model() {
     // hardcode single cluster

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func TestSSH_ConfigCAStorageUpgrade(t *testing.T) {
@@ -26,7 +26,7 @@ func TestSSH_ConfigCAStorageUpgrade(t *testing.T) {
 	// Store at an older path
 	err = config.StorageView.Put(context.Background(), &logical.StorageEntry{
 		Key:   caPrivateKeyStoragePathDeprecated,
-		Value: []byte(privateKey),
+		Value: []byte(testCAPrivateKey),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestSSH_ConfigCAStorageUpgrade(t *testing.T) {
 	// Store at an older path
 	err = config.StorageView.Put(context.Background(), &logical.StorageEntry{
 		Key:   caPublicKeyStoragePathDeprecated,
-		Value: []byte(publicKey),
+		Value: []byte(testCAPublicKey),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,8 +133,8 @@ func TestSSH_ConfigCAUpdateDelete(t *testing.T) {
 
 	caReq.Operation = logical.UpdateOperation
 	caReq.Data = map[string]interface{}{
-		"public_key":  publicKey,
-		"private_key": privateKey,
+		"public_key":  testCAPublicKey,
+		"private_key": testCAPrivateKey,
 	}
 
 	// Successfully create a new one

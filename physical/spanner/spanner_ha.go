@@ -10,14 +10,16 @@ import (
 	metrics "github.com/armon/go-metrics"
 	"github.com/hashicorp/errwrap"
 	uuid "github.com/hashicorp/go-uuid"
-	"github.com/hashicorp/vault/physical"
+	"github.com/hashicorp/vault/sdk/physical"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 )
 
 // Verify Backend satisfies the correct interfaces
-var _ physical.HABackend = (*Backend)(nil)
-var _ physical.Lock = (*Lock)(nil)
+var (
+	_ physical.HABackend = (*Backend)(nil)
+	_ physical.Lock      = (*Lock)(nil)
+)
 
 const (
 	// LockRenewInterval is the time to wait between lock renewals.
@@ -175,13 +177,9 @@ func (l *Lock) Unlock() error {
 	}
 	l.stopLock.Unlock()
 
-	// Pooling
-	l.backend.permitPool.Acquire()
-	defer l.backend.permitPool.Release()
-
 	// Delete
 	ctx := context.Background()
-	if _, err := l.backend.client.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+	if _, err := l.backend.haClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		row, err := txn.ReadRow(ctx, l.backend.haTable, spanner.Key{l.key}, []string{"Identity"})
 		if err != nil {
 			if spanner.ErrCode(err) != codes.NotFound {
@@ -327,10 +325,6 @@ OUTER:
 //   - if key is empty or identity is the same or timestamp exceeds TTL
 //     - update the lock to self
 func (l *Lock) writeLock() (bool, error) {
-	// Pooling
-	l.backend.permitPool.Acquire()
-	defer l.backend.permitPool.Release()
-
 	// Keep track of whether the lock was written
 	lockWritten := false
 
@@ -349,7 +343,7 @@ func (l *Lock) writeLock() (bool, error) {
 		}
 	}()
 
-	_, err := l.backend.client.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+	_, err := l.backend.haClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		row, err := txn.ReadRow(ctx, l.backend.haTable, spanner.Key{l.key}, []string{"Key", "Identity", "Timestamp"})
 		if err != nil && spanner.ErrCode(err) != codes.NotFound {
 			return err
@@ -396,12 +390,8 @@ func (l *Lock) writeLock() (bool, error) {
 
 // get retrieves the value for the lock.
 func (l *Lock) get(ctx context.Context) (*LockRecord, error) {
-	// Pooling
-	l.backend.permitPool.Acquire()
-	defer l.backend.permitPool.Release()
-
 	// Read
-	row, err := l.backend.client.Single().ReadRow(ctx, l.backend.haTable, spanner.Key{l.key}, []string{"Key", "Value", "Timestamp", "Identity"})
+	row, err := l.backend.haClient.Single().ReadRow(ctx, l.backend.haTable, spanner.Key{l.key}, []string{"Key", "Value", "Timestamp", "Identity"})
 	if spanner.ErrCode(err) == codes.NotFound {
 		return nil, nil
 	}

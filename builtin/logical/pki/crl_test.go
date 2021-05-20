@@ -6,7 +6,7 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	vaulthttp "github.com/hashicorp/vault/http"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/vault"
 )
 
@@ -51,7 +51,7 @@ func TestBackend_CRL_EnableDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var serials = make(map[int]string)
+	serials := make(map[int]string)
 	for i := 0; i < 6; i++ {
 		resp, err := client.Logical().Write("pki/issue/test", map[string]interface{}{
 			"common_name": "test.foobar.com",

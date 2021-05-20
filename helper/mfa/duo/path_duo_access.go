@@ -7,8 +7,8 @@ import (
 
 	duoapi "github.com/duosecurity/duo_api_golang"
 	"github.com/duosecurity/duo_api_golang/authapi"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 type AuthClient interface {
@@ -20,15 +20,15 @@ func pathDuoAccess() *framework.Path {
 	return &framework.Path{
 		Pattern: `duo/access`,
 		Fields: map[string]*framework.FieldSchema{
-			"skey": &framework.FieldSchema{
+			"skey": {
 				Type:        framework.TypeString,
 				Description: "Duo secret key",
 			},
-			"ikey": &framework.FieldSchema{
+			"ikey": {
 				Type:        framework.TypeString,
 				Description: "Duo integration key",
 			},
-			"host": &framework.FieldSchema{
+			"host": {
 				Type:        framework.TypeString,
 				Description: "Duo api host",
 			},

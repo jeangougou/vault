@@ -4,22 +4,22 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/vault/helper/policyutil"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/cidrutil"
+	"github.com/hashicorp/vault/sdk/helper/policyutil"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func pathLogin(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: `login/(?P<username>.+)`,
 		Fields: map[string]*framework.FieldSchema{
-			"username": &framework.FieldSchema{
+			"username": {
 				Type:        framework.TypeString,
 				Description: "DN (distinguished name) to be used for login.",
 			},
 
-			"password": &framework.FieldSchema{
+			"password": {
 				Type:        framework.TypeString,
 				Description: "Password for this user.",
 			},
@@ -51,16 +51,27 @@ func (b *backend) pathLoginAliasLookahead(ctx context.Context, req *logical.Requ
 }
 
 func (b *backend) pathLogin(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	username := d.Get("username").(string)
-	password := d.Get("password").(string)
-
 	cfg, err := b.Config(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	if cfg == nil {
-		return logical.ErrorResponse("ldap backend not configured"), nil
+		return logical.ErrorResponse("auth method not configured"), nil
 	}
+
+	// Check for a CIDR match.
+	if len(cfg.TokenBoundCIDRs) > 0 {
+		if req.Connection == nil {
+			b.Logger().Warn("token bound CIDRs found but no connection information available for validation")
+			return nil, logical.ErrPermissionDenied
+		}
+		if !cidrutil.RemoteAddrIsOk(req.Connection.RemoteAddr, cfg.TokenBoundCIDRs) {
+			return nil, logical.ErrPermissionDenied
+		}
+	}
+
+	username := d.Get("username").(string)
+	password := d.Get("password").(string)
 
 	policies, resp, groupNames, err := b.Login(ctx, req, username, password)
 	// Handle an internal error
@@ -88,37 +99,57 @@ func (b *backend) pathLogin(ctx context.Context, req *logical.Request, d *framew
 			Name: username,
 		},
 	}
+
 	cfg.PopulateTokenAuth(auth)
-	auth.Policies = append(auth.Policies, policies...)
-	auth.Policies = strutil.RemoveDuplicates(auth.Policies, false)
+
+	// Add in configured policies from mappings
+	if len(policies) > 0 {
+		auth.Policies = append(auth.Policies, policies...)
+	}
+
+	resp.Auth = auth
 
 	for _, groupName := range groupNames {
 		if groupName == "" {
 			continue
 		}
-		auth.GroupAliases = append(auth.GroupAliases, &logical.Alias{
+		resp.Auth.GroupAliases = append(resp.Auth.GroupAliases, &logical.Alias{
 			Name: groupName,
 		})
 	}
-
-	resp.Auth = auth
 	return resp, nil
 }
 
 func (b *backend) pathLoginRenew(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	cfg, err := b.Config(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return logical.ErrorResponse("auth method not configured"), nil
+	}
+
 	username := req.Auth.Metadata["username"]
 	password := req.Auth.InternalData["password"].(string)
 
 	loginPolicies, resp, groupNames, err := b.Login(ctx, req, username, password)
-	if len(loginPolicies) == 0 {
+	if err != nil || (resp != nil && resp.IsError()) {
 		return resp, err
 	}
 
-	if !policyutil.EquivalentPolicies(loginPolicies, req.Auth.TokenPolicies) {
+	finalPolicies := cfg.TokenPolicies
+	if len(loginPolicies) > 0 {
+		finalPolicies = append(finalPolicies, loginPolicies...)
+	}
+
+	if !policyutil.EquivalentPolicies(finalPolicies, req.Auth.TokenPolicies) {
 		return nil, fmt.Errorf("policies have changed, not renewing")
 	}
 
 	resp.Auth = req.Auth
+	resp.Auth.Period = cfg.TokenPeriod
+	resp.Auth.TTL = cfg.TokenTTL
+	resp.Auth.MaxTTL = cfg.TokenMaxTTL
 
 	// Remove old aliases
 	resp.Auth.GroupAliases = nil

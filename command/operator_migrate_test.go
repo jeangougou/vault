@@ -17,11 +17,13 @@ import (
 	"github.com/go-test/deep"
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/command/server"
-	"github.com/hashicorp/vault/helper/base62"
 	"github.com/hashicorp/vault/helper/testhelpers"
-	"github.com/hashicorp/vault/physical"
+	"github.com/hashicorp/vault/sdk/helper/base62"
+	"github.com/hashicorp/vault/sdk/physical"
 	"github.com/hashicorp/vault/vault"
 )
+
+const trailing_slash_key = "trailing_slash/"
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
@@ -117,7 +119,7 @@ storage_source "src_type" {
 
 storage_destination "dest_type" {
   path = "dest_path"
-}`), 0644)
+}`), 0o644)
 		defer os.Remove(cfgName)
 
 		expCfg := &migratorConfig{
@@ -143,7 +145,7 @@ storage_destination "dest_type" {
 		}
 
 		verifyBad := func(cfg string) {
-			ioutil.WriteFile(cfgName, []byte(cfg), 0644)
+			ioutil.WriteFile(cfgName, []byte(cfg), 0o644)
 			_, err := cmd.loadMigratorConfig(cfgName)
 			if err == nil {
 				t.Fatalf("expected error but none received from: %v", cfg)
@@ -189,7 +191,6 @@ storage_destination "dest_type" {
 storage_destination "dest_type2" {
   path = "dest_path"
 }`)
-
 	})
 	t.Run("DFS Scan", func(t *testing.T) {
 		s, _ := physicalBackends["inmem"](map[string]string{}, nil)
@@ -208,6 +209,9 @@ storage_destination "dest_type2" {
 			out = append(out, path)
 			return nil
 		})
+
+		delete(data, trailing_slash_key)
+		delete(data, "")
 
 		var keys []string
 		for key := range data {
@@ -267,6 +271,11 @@ func generateData() map[string][]byte {
 	result[storageMigrationLock] = []byte{}
 	result[vault.CoreLockPath] = []byte{}
 
+	// Empty keys are now prevented in Vault, but older data sets
+	// might contain them.
+	result[""] = []byte{}
+	result[trailing_slash_key] = []byte{}
+
 	return result
 }
 
@@ -292,7 +301,7 @@ func compareStoredData(s physical.Backend, ref map[string][]byte, start string) 
 			return err
 		}
 
-		if k == storageMigrationLock || k == vault.CoreLockPath {
+		if k == storageMigrationLock || k == vault.CoreLockPath || k == "" || strings.HasSuffix(k, "/") {
 			if entry == nil {
 				continue
 			}

@@ -9,12 +9,13 @@ import (
 
 // Future is used to represent an action that may occur in the future.
 type Future interface {
-	// Error blocks until the future arrives and then
-	// returns the error status of the future.
-	// This may be called any number of times - all
-	// calls will return the same value.
-	// Note that it is not OK to call this method
-	// twice concurrently on the same Future instance.
+	// Error blocks until the future arrives and then returns the error status
+	// of the future. This may be called any number of times - all calls will
+	// return the same value, however is not OK to call this method twice
+	// concurrently on the same Future instance.
+	// Error will only return generic errors related to raft, such
+	// as ErrLeadershipLost, or ErrRaftShutdown. Some operations, such as
+	// ApplyLog, may also return errors from other methods.
 	Error() error
 }
 
@@ -32,9 +33,11 @@ type IndexFuture interface {
 type ApplyFuture interface {
 	IndexFuture
 
-	// Response returns the FSM response as returned
-	// by the FSM.Apply method. This must not be called
-	// until after the Error method has returned.
+	// Response returns the FSM response as returned by the FSM.Apply method. This
+	// must not be called until after the Error method has returned.
+	// Note that if FSM.Apply returns an error, it will be returned by Response,
+	// and not by the Error method, so it is always important to check Response
+	// for errors from the FSM.
 	Response() interface{}
 }
 
@@ -58,6 +61,12 @@ type SnapshotFuture interface {
 	Open() (*SnapshotMeta, io.ReadCloser, error)
 }
 
+// LeadershipTransferFuture is used for waiting on a user-triggered leadership
+// transfer to complete.
+type LeadershipTransferFuture interface {
+	Future
+}
+
 // errorFuture is used to return a static error.
 type errorFuture struct {
 	err error
@@ -78,9 +87,10 @@ func (e errorFuture) Index() uint64 {
 // deferError can be embedded to allow a future
 // to provide an error in the future.
 type deferError struct {
-	err       error
-	errCh     chan error
-	responded bool
+	err        error
+	errCh      chan error
+	responded  bool
+	ShutdownCh chan struct{}
 }
 
 func (d *deferError) init() {
@@ -97,7 +107,11 @@ func (d *deferError) Error() error {
 	if d.errCh == nil {
 		panic("waiting for response on nil channel")
 	}
-	d.err = <-d.errCh
+	select {
+	case d.err = <-d.errCh:
+	case <-d.ShutdownCh:
+		d.err = ErrRaftShutdown
+	}
 	return d.err
 }
 
@@ -177,14 +191,13 @@ type userSnapshotFuture struct {
 func (u *userSnapshotFuture) Open() (*SnapshotMeta, io.ReadCloser, error) {
 	if u.opener == nil {
 		return nil, nil, fmt.Errorf("no snapshot available")
-	} else {
-		// Invalidate the opener so it can't get called multiple times,
-		// which isn't generally safe.
-		defer func() {
-			u.opener = nil
-		}()
-		return u.opener()
 	}
+	// Invalidate the opener so it can't get called multiple times,
+	// which isn't generally safe.
+	defer func() {
+		u.opener = nil
+	}()
+	return u.opener()
 }
 
 // userRestoreFuture is used for waiting on a user-triggered restore of an
@@ -225,6 +238,15 @@ type verifyFuture struct {
 	quorumSize int
 	votes      int
 	voteLock   sync.Mutex
+}
+
+// leadershipTransferFuture is used to track the progress of a leadership
+// transfer internally.
+type leadershipTransferFuture struct {
+	deferError
+
+	ID      *ServerID
+	Address *ServerAddress
 }
 
 // configurationsFuture is used to retrieve the current configurations. This is

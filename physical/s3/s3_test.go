@@ -7,14 +7,13 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/vault/helper/awsutil"
-	"github.com/hashicorp/vault/helper/logging"
-	"github.com/hashicorp/vault/physical"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	log "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/vault/sdk/helper/awsutil"
+	"github.com/hashicorp/vault/sdk/helper/logging"
+	"github.com/hashicorp/vault/sdk/physical"
 )
 
 func TestDefaultS3Backend(t *testing.T) {
@@ -26,16 +25,22 @@ func TestS3BackendSseKms(t *testing.T) {
 }
 
 func DoS3BackendTest(t *testing.T, kmsKeyId string) {
-	credsConfig := &awsutil.CredentialsConfig{}
+	if enabled := os.Getenv("VAULT_ACC"); enabled == "" {
+		t.Skip()
+	}
+
+	logger := logging.NewVaultLogger(log.Debug)
+
+	credsConfig := &awsutil.CredentialsConfig{Logger: logger}
 
 	credsChain, err := credsConfig.GenerateCredentialChain()
 	if err != nil {
-		t.SkipNow()
+		t.Fatal(err)
 	}
 
 	_, err = credsChain.Get()
 	if err != nil {
-		t.SkipNow()
+		t.Fatal(err)
 	}
 
 	// If the variable is empty or doesn't exist, the default
@@ -47,13 +52,17 @@ func DoS3BackendTest(t *testing.T, kmsKeyId string) {
 		region = "us-east-1"
 	}
 
-	s3conn := s3.New(session.New(&aws.Config{
+	sess, err := session.NewSession(&aws.Config{
 		Credentials: credsChain,
 		Endpoint:    aws.String(endpoint),
 		Region:      aws.String(region),
-	}))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3conn := s3.New(sess)
 
-	var randInt = rand.New(rand.NewSource(time.Now().UnixNano())).Int()
+	randInt := rand.New(rand.NewSource(time.Now().UnixNano())).Int()
 	bucket := fmt.Sprintf("vault-s3-testacc-%d", randInt)
 
 	_, err = s3conn.CreateBucket(&s3.CreateBucketInput{
@@ -87,12 +96,11 @@ func DoS3BackendTest(t *testing.T, kmsKeyId string) {
 		}
 	}()
 
-	logger := logging.NewVaultLogger(log.Debug)
-
 	// This uses the same logic to find the AWS credentials as we did at the beginning of the test
 	b, err := NewS3Backend(map[string]string{
 		"bucket":   bucket,
 		"kmsKeyId": kmsKeyId,
+		"path":     "test/vault",
 	}, logger)
 	if err != nil {
 		t.Fatalf("err: %s", err)

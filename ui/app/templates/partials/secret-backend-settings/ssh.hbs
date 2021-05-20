@@ -2,40 +2,34 @@
   <div class="box is-fullwidth is-sideless is-marginless">
     <div class="field">
       <label for="publicKey" class="is-label">
-        Public Key
+        Public key
       </label>
       <div class="control">
-        {{textarea
-          name="publicKey"
-          id="publicKey"
-          class="textarea"
-          value=model.publicKey
-          readonly=true
+        <MaskedInput
+          @name="publickey"
+          @id="publicKey"
+          @value={{model.publicKey}}
+          @displayOnly={{true}}
+          @allowCopy={{true}}
           data-test-ssh-input="public-key"
-        }}
+        />
       </div>
     </div>
   </div>
   <div class="field is-grouped-split box is-fullwidth is-bottomless">
     <div class="control">
-      {{#copy-button
-        clipboardTarget="#publicKey"
-        class="button is-primary"
-        buttonType="button"
-        success=(action (set-flash-message "Public Key copied!"))
-      }}
+      <CopyButton @clipboardText={{model.publicKey}} @class="button is-primary" @buttonType="button" @success={{action (set-flash-message "Public Key copied!")}}>
         Copy
-      {{/copy-button}}
+      </CopyButton>
     </div>
     <div class="control">
-      {{#confirm-action
-        buttonClasses="button"
-        onConfirmAction=(action "saveConfig" (hash delete=true))
-        confirmMessage=(concat "This will delete the current CA keys associated with this backend. Are you sure you want to delete them?")
-        cancelButtonText="Cancel"
-      }}
+      <ConfirmAction
+        @buttonClasses="button"
+        @confirmMessage="This will remove the CA certificate information."
+        @onConfirmAction={{action "saveConfig" (hash delete=true)}}
+      >
         Delete
-      {{/confirm-action}}
+      </ConfirmAction>
     </div>
   </div>
 {{else}}
@@ -44,18 +38,18 @@
       <NamespaceReminder @mode="save" @noun="configuration" />
       <div class="field">
         <label for="privateKey" class="is-label">
-          Private Key
+          Private key
         </label>
         <div class="control">
-          {{textarea name="privateKey" id="privateKey" class="input" value=model.privateKey}}
+          <Textarea @name="privateKey" @id="privateKey" class="input" @value={{model.privateKey}} />
         </div>
       </div>
       <div class="field">
         <label for="publicKey" class="is-label">
-          Public Key
+          Public key
         </label>
         <div class="control">
-          {{textarea name="publicKey" id="publicKey" class="input" value=model.publicKey}}
+          <Textarea @name="publicKey" @id="publicKey" class="input" @value={{model.publicKey}} />
         </div>
       </div>
       <div class="b-checkbox">
@@ -67,10 +61,10 @@
          data-test-ssh-input={{generateSigningKey}}
         />
         <label for="generateSigningKey" class="is-label">
-          Generate Signing Key
-          {{#info-tooltip}}
+          Generate signing key
+          <InfoTooltip>
             Specifies if Vault should generate the signing key pair internally
-          {{/info-tooltip}}
+          </InfoTooltip>
         </label>
       </div>
     </div>

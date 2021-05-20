@@ -5,13 +5,15 @@ import (
 	"strings"
 
 	"github.com/hashicorp/vault/api"
-	"github.com/hashicorp/vault/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/consts"
 	"github.com/mitchellh/cli"
 	"github.com/posener/complete"
 )
 
-var _ cli.Command = (*PluginRegisterCommand)(nil)
-var _ cli.CommandAutocomplete = (*PluginRegisterCommand)(nil)
+var (
+	_ cli.Command             = (*PluginRegisterCommand)(nil)
+	_ cli.CommandAutocomplete = (*PluginRegisterCommand)(nil)
+)
 
 type PluginRegisterCommand struct {
 	*BaseCommand

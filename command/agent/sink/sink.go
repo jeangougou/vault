@@ -13,11 +13,15 @@ import (
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/helper/dhutil"
-	"github.com/hashicorp/vault/helper/jsonutil"
+	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 )
 
 type Sink interface {
 	WriteToken(string) error
+}
+
+type SinkReader interface {
+	Token() string
 }
 
 type SinkConfig struct {
@@ -28,6 +32,7 @@ type SinkConfig struct {
 	WrapTTL            time.Duration
 	DHType             string
 	DHPath             string
+	DeriveKey          bool
 	AAD                string
 	cachedRemotePubKey []byte
 	cachedPubKey       []byte
@@ -43,7 +48,6 @@ type SinkServerConfig struct {
 
 // SinkServer is responsible for pushing tokens to sinks
 type SinkServer struct {
-	DoneCh        chan struct{}
 	logger        hclog.Logger
 	client        *api.Client
 	random        *rand.Rand
@@ -53,7 +57,6 @@ type SinkServer struct {
 
 func NewSinkServer(conf *SinkServerConfig) *SinkServer {
 	ss := &SinkServer{
-		DoneCh:        make(chan struct{}),
 		logger:        conf.Logger,
 		client:        conf.Client,
 		random:        rand.New(rand.NewSource(int64(time.Now().Nanosecond()))),
@@ -66,90 +69,98 @@ func NewSinkServer(conf *SinkServerConfig) *SinkServer {
 
 // Run executes the server's run loop, which is responsible for reading
 // in new tokens and pushing them out to the various sinks.
-func (ss *SinkServer) Run(ctx context.Context, incoming chan string, sinks []*SinkConfig) {
+func (ss *SinkServer) Run(ctx context.Context, incoming chan string, sinks []*SinkConfig) error {
+	latestToken := new(string)
+	writeSink := func(currSink *SinkConfig, currToken string) error {
+		if currToken != *latestToken {
+			return nil
+		}
+		var err error
+
+		if currSink.WrapTTL != 0 {
+			if currToken, err = currSink.wrapToken(ss.client, currSink.WrapTTL, currToken); err != nil {
+				return err
+			}
+		}
+
+		if currSink.DHType != "" {
+			if currToken, err = currSink.encryptToken(currToken); err != nil {
+				return err
+			}
+		}
+
+		return currSink.WriteToken(currToken)
+	}
+
 	if incoming == nil {
-		panic("incoming or shutdown channel are nil")
+		return errors.New("sink server: incoming channel is nil")
 	}
 
 	ss.logger.Info("starting sink server")
 	defer func() {
 		ss.logger.Info("sink server stopped")
-		close(ss.DoneCh)
 	}()
 
-	latestToken := new(string)
-	sinkCh := make(chan func() error, len(sinks))
+	type sinkToken struct {
+		sink  *SinkConfig
+		token string
+	}
+	sinkCh := make(chan sinkToken, len(sinks))
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 
 		case token := <-incoming:
-			if token != *latestToken {
+			if len(sinks) > 0 {
+				if token != *latestToken {
 
-				// Drain the existing funcs
-			drainLoop:
-				for {
-					select {
-					case <-sinkCh:
-						atomic.AddInt32(ss.remaining, -1)
-					default:
-						break drainLoop
+					// Drain the existing funcs
+				drainLoop:
+					for {
+						select {
+						case <-sinkCh:
+							atomic.AddInt32(ss.remaining, -1)
+						default:
+							break drainLoop
+						}
+					}
+
+					*latestToken = token
+
+					for _, s := range sinks {
+						atomic.AddInt32(ss.remaining, 1)
+						sinkCh <- sinkToken{s, token}
 					}
 				}
-
-				*latestToken = token
-
-				sinkFunc := func(currSink *SinkConfig, currToken string) func() error {
-					return func() error {
-						if currToken != *latestToken {
-							return nil
-						}
-						var err error
-
-						if currSink.WrapTTL != 0 {
-							if currToken, err = currSink.wrapToken(ss.client, currSink.WrapTTL, currToken); err != nil {
-								return err
-							}
-						}
-
-						if currSink.DHType != "" {
-							if currToken, err = currSink.encryptToken(currToken); err != nil {
-								return err
-							}
-						}
-
-						return currSink.WriteToken(currToken)
-					}
-				}
-
-				for _, s := range sinks {
-					atomic.AddInt32(ss.remaining, 1)
-					sinkCh <- sinkFunc(s, token)
+			} else {
+				ss.logger.Trace("no sinks, ignoring new token")
+				if ss.exitAfterAuth {
+					ss.logger.Trace("no sinks, exitAfterAuth, bye")
+					return nil
 				}
 			}
-
-		case sinkFunc := <-sinkCh:
+		case st := <-sinkCh:
 			atomic.AddInt32(ss.remaining, -1)
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			default:
 			}
 
-			if err := sinkFunc(); err != nil {
+			if err := writeSink(st.sink, st.token); err != nil {
 				backoff := 2*time.Second + time.Duration(ss.random.Int63()%int64(time.Second*2)-int64(time.Second))
 				ss.logger.Error("error returned by sink function, retrying", "error", err, "backoff", backoff.String())
 				select {
 				case <-ctx.Done():
-					return
+					return nil
 				case <-time.After(backoff):
 					atomic.AddInt32(ss.remaining, 1)
-					sinkCh <- sinkFunc
+					sinkCh <- st
 				}
 			} else {
 				if atomic.LoadInt32(ss.remaining) == 0 && ss.exitAfterAuth {
-					return
+					return nil
 				}
 			}
 		}
@@ -192,7 +203,16 @@ func (s *SinkConfig) encryptToken(token string) (string, error) {
 		resp.Curve25519PublicKey = s.cachedPubKey
 	}
 
-	aesKey, err = dhutil.GenerateSharedKey(s.cachedPriKey, s.cachedRemotePubKey)
+	secret, err := dhutil.GenerateSharedSecret(s.cachedPriKey, s.cachedRemotePubKey)
+	if err != nil {
+		return "", errwrap.Wrapf("error calculating shared key: {{err}}", err)
+	}
+	if s.DeriveKey {
+		aesKey, err = dhutil.DeriveSharedKey(secret, s.cachedPubKey, s.cachedRemotePubKey)
+	} else {
+		aesKey = secret
+	}
+
 	if err != nil {
 		return "", errwrap.Wrapf("error deriving shared key: {{err}}", err)
 	}

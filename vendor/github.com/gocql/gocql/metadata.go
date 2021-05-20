@@ -20,6 +20,12 @@ type KeyspaceMetadata struct {
 	StrategyClass   string
 	StrategyOptions map[string]interface{}
 	Tables          map[string]*TableMetadata
+	Functions       map[string]*FunctionMetadata
+	Aggregates      map[string]*AggregateMetadata
+	// Deprecated: use the MaterializedViews field for views and UserTypes field for udts instead.
+	Views             map[string]*ViewMetadata
+	MaterializedViews map[string]*MaterializedViewMetadata
+	UserTypes         map[string]*UserTypeMetadata
 }
 
 // schema metadata for a table (a.k.a. column family)
@@ -50,6 +56,76 @@ type ColumnMetadata struct {
 	ClusteringOrder string
 	Order           ColumnOrder
 	Index           ColumnIndexMetadata
+}
+
+// FunctionMetadata holds metadata for function constructs
+type FunctionMetadata struct {
+	Keyspace          string
+	Name              string
+	ArgumentTypes     []TypeInfo
+	ArgumentNames     []string
+	Body              string
+	CalledOnNullInput bool
+	Language          string
+	ReturnType        TypeInfo
+}
+
+// AggregateMetadata holds metadata for aggregate constructs
+type AggregateMetadata struct {
+	Keyspace      string
+	Name          string
+	ArgumentTypes []TypeInfo
+	FinalFunc     FunctionMetadata
+	InitCond      string
+	ReturnType    TypeInfo
+	StateFunc     FunctionMetadata
+	StateType     TypeInfo
+
+	stateFunc string
+	finalFunc string
+}
+
+// ViewMetadata holds the metadata for views.
+// Deprecated: this is kept for backwards compatibility issues. Use MaterializedViewMetadata.
+type ViewMetadata struct {
+	Keyspace   string
+	Name       string
+	FieldNames []string
+	FieldTypes []TypeInfo
+}
+
+// MaterializedViewMetadata holds the metadata for materialized views.
+type MaterializedViewMetadata struct {
+	Keyspace                string
+	Name                    string
+	BaseTableId             UUID
+	BaseTable               *TableMetadata
+	BloomFilterFpChance     float64
+	Caching                 map[string]string
+	Comment                 string
+	Compaction              map[string]string
+	Compression             map[string]string
+	CrcCheckChance          float64
+	DcLocalReadRepairChance float64
+	DefaultTimeToLive       int
+	Extensions              map[string]string
+	GcGraceSeconds          int
+	Id                      UUID
+	IncludeAllColumns       bool
+	MaxIndexInterval        int
+	MemtableFlushPeriodInMs int
+	MinIndexInterval        int
+	ReadRepairChance        float64
+	SpeculativeRetry        string
+
+	baseTableName string
+}
+
+type UserTypeMetadata struct {
+	Keyspace   string
+	Name       string
+	FieldNames []string
+	FieldTypes []TypeInfo
 }
 
 // the ordering of the column with regard to its comparator
@@ -196,9 +272,25 @@ func (s *schemaDescriber) refreshSchema(keyspaceName string) error {
 	if err != nil {
 		return err
 	}
+	functions, err := getFunctionsMetadata(s.session, keyspaceName)
+	if err != nil {
+		return err
+	}
+	aggregates, err := getAggregatesMetadata(s.session, keyspaceName)
+	if err != nil {
+		return err
+	}
+	views, err := getViewsMetadata(s.session, keyspaceName)
+	if err != nil {
+		return err
+	}
+	materializedViews, err := getMaterializedViewsMetadata(s.session, keyspaceName)
+	if err != nil {
+		return err
+	}
 
 	// organize the schema data
-	compileMetadata(s.session.cfg.ProtoVersion, keyspace, tables, columns)
+	compileMetadata(s.session.cfg.ProtoVersion, keyspace, tables, columns, functions, aggregates, views, materializedViews)
 
 	// update the cache
 	s.cache[keyspaceName] = keyspace
@@ -216,12 +308,48 @@ func compileMetadata(
 	keyspace *KeyspaceMetadata,
 	tables []TableMetadata,
 	columns []ColumnMetadata,
+	functions []FunctionMetadata,
+	aggregates []AggregateMetadata,
+	views []ViewMetadata,
+	materializedViews []MaterializedViewMetadata,
 ) {
 	keyspace.Tables = make(map[string]*TableMetadata)
 	for i := range tables {
 		tables[i].Columns = make(map[string]*ColumnMetadata)
 
 		keyspace.Tables[tables[i].Name] = &tables[i]
+	}
+	keyspace.Functions = make(map[string]*FunctionMetadata, len(functions))
+	for i := range functions {
+		keyspace.Functions[functions[i].Name] = &functions[i]
+	}
+	keyspace.Aggregates = make(map[string]*AggregateMetadata, len(aggregates))
+	for i, _ := range aggregates {
+		aggregates[i].FinalFunc = *keyspace.Functions[aggregates[i].finalFunc]
+		aggregates[i].StateFunc = *keyspace.Functions[aggregates[i].stateFunc]
+		keyspace.Aggregates[aggregates[i].Name] = &aggregates[i]
+	}
+	keyspace.Views = make(map[string]*ViewMetadata, len(views))
+	for i := range views {
+		keyspace.Views[views[i].Name] = &views[i]
+	}
+	// Views currently holds the types and hasn't been deleted for backward compatibility issues.
+	// That's why it's ok to copy Views into Types in this case. For the real Views use MaterializedViews.
+	types := make([]UserTypeMetadata, len(views))
+	for i := range views {
+		types[i].Keyspace = views[i].Keyspace
+		types[i].Name = views[i].Name
+		types[i].FieldNames = views[i].FieldNames
+		types[i].FieldTypes = views[i].FieldTypes
+	}
+	keyspace.UserTypes = make(map[string]*UserTypeMetadata, len(views))
+	for i := range types {
+		keyspace.UserTypes[types[i].Name] = &types[i]
+	}
+	keyspace.MaterializedViews = make(map[string]*MaterializedViewMetadata, len(materializedViews))
+	for i, _ := range materializedViews {
+		materializedViews[i].BaseTable = keyspace.Tables[materializedViews[i].baseTableName]
+		keyspace.MaterializedViews[materializedViews[i].Name] = &materializedViews[i]
 	}
 
 	// add columns from the schema data
@@ -431,7 +559,7 @@ func getKeyspaceMetadata(session *Session, keyspaceName string) (*KeyspaceMetada
 		iter.Scan(&keyspace.DurableWrites, &replication)
 		err := iter.Close()
 		if err != nil {
-			return nil, fmt.Errorf("Error querying keyspace schema: %v", err)
+			return nil, fmt.Errorf("error querying keyspace schema: %v", err)
 		}
 
 		keyspace.StrategyClass = replication["class"]
@@ -457,13 +585,13 @@ func getKeyspaceMetadata(session *Session, keyspaceName string) (*KeyspaceMetada
 		iter.Scan(&keyspace.DurableWrites, &keyspace.StrategyClass, &strategyOptionsJSON)
 		err := iter.Close()
 		if err != nil {
-			return nil, fmt.Errorf("Error querying keyspace schema: %v", err)
+			return nil, fmt.Errorf("error querying keyspace schema: %v", err)
 		}
 
 		err = json.Unmarshal(strategyOptionsJSON, &keyspace.StrategyOptions)
 		if err != nil {
 			return nil, fmt.Errorf(
-				"Invalid JSON value '%s' as strategy_options for in keyspace '%s': %v",
+				"invalid JSON value '%s' as strategy_options for in keyspace '%s': %v",
 				strategyOptionsJSON, keyspace.Name, err,
 			)
 		}
@@ -575,7 +703,7 @@ func getTableMetadata(session *Session, keyspaceName string) ([]TableMetadata, e
 			if err != nil {
 				iter.Close()
 				return nil, fmt.Errorf(
-					"Invalid JSON value '%s' as key_aliases for in table '%s': %v",
+					"invalid JSON value '%s' as key_aliases for in table '%s': %v",
 					keyAliasesJSON, table.Name, err,
 				)
 			}
@@ -588,7 +716,7 @@ func getTableMetadata(session *Session, keyspaceName string) ([]TableMetadata, e
 			if err != nil {
 				iter.Close()
 				return nil, fmt.Errorf(
-					"Invalid JSON value '%s' as column_aliases for in table '%s': %v",
+					"invalid JSON value '%s' as column_aliases for in table '%s': %v",
 					columnAliasesJSON, table.Name, err,
 				)
 			}
@@ -600,7 +728,7 @@ func getTableMetadata(session *Session, keyspaceName string) ([]TableMetadata, e
 
 	err := iter.Close()
 	if err != nil && err != ErrNotFound {
-		return nil, fmt.Errorf("Error querying table schema: %v", err)
+		return nil, fmt.Errorf("error querying table schema: %v", err)
 	}
 
 	return tables, nil
@@ -649,7 +777,7 @@ func (s *Session) scanColumnMetadataV1(keyspace string) ([]ColumnMetadata, error
 			err := json.Unmarshal(indexOptionsJSON, &column.Index.Options)
 			if err != nil {
 				return nil, fmt.Errorf(
-					"Invalid JSON value '%s' as index_options for column '%s' in table '%s': %v",
+					"invalid JSON value '%s' as index_options for column '%s' in table '%s': %v",
 					indexOptionsJSON,
 					column.Name,
 					column.Table,
@@ -709,7 +837,7 @@ func (s *Session) scanColumnMetadataV2(keyspace string) ([]ColumnMetadata, error
 			err := json.Unmarshal(indexOptionsJSON, &column.Index.Options)
 			if err != nil {
 				return nil, fmt.Errorf(
-					"Invalid JSON value '%s' as index_options for column '%s' in table '%s': %v",
+					"invalid JSON value '%s' as index_options for column '%s' in table '%s': %v",
 					indexOptionsJSON,
 					column.Name,
 					column.Table,
@@ -787,10 +915,244 @@ func getColumnMetadata(session *Session, keyspaceName string) ([]ColumnMetadata,
 	}
 
 	if err != nil && err != ErrNotFound {
-		return nil, fmt.Errorf("Error querying column schema: %v", err)
+		return nil, fmt.Errorf("error querying column schema: %v", err)
 	}
 
 	return columns, nil
+}
+
+func getTypeInfo(t string) TypeInfo {
+	if strings.HasPrefix(t, apacheCassandraTypePrefix) {
+		t = apacheToCassandraType(t)
+	}
+	return getCassandraType(t)
+}
+
+func getViewsMetadata(session *Session, keyspaceName string) ([]ViewMetadata, error) {
+	if session.cfg.ProtoVersion == protoVersion1 {
+		return nil, nil
+	}
+	var tableName string
+	if session.useSystemSchema {
+		tableName = "system_schema.types"
+	} else {
+		tableName = "system.schema_usertypes"
+	}
+	stmt := fmt.Sprintf(`
+		SELECT
+			type_name,
+			field_names,
+			field_types
+		FROM %s
+		WHERE keyspace_name = ?`, tableName)
+
+	var views []ViewMetadata
+
+	rows := session.control.query(stmt, keyspaceName).Scanner()
+	for rows.Next() {
+		view := ViewMetadata{Keyspace: keyspaceName}
+		var argumentTypes []string
+		err := rows.Scan(&view.Name,
+			&view.FieldNames,
+			&argumentTypes,
+		)
+		if err != nil {
+			return nil, err
+		}
+		view.FieldTypes = make([]TypeInfo, len(argumentTypes))
+		for i, argumentType := range argumentTypes {
+			view.FieldTypes[i] = getTypeInfo(argumentType)
+		}
+		views = append(views, view)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return views, nil
+}
+
+func getMaterializedViewsMetadata(session *Session, keyspaceName string) ([]MaterializedViewMetadata, error) {
+	if !session.useSystemSchema {
+		return nil, nil
+	}
+	var tableName = "system_schema.views"
+	stmt := fmt.Sprintf(`
+		SELECT
+			view_name,
+			base_table_id,
+			base_table_name,
+			bloom_filter_fp_chance,
+			caching,
+			comment,
+			compaction,
+			compression,
+			crc_check_chance,
+			dclocal_read_repair_chance,
+			default_time_to_live,
+			extensions,
+			gc_grace_seconds,
+			id,
+			include_all_columns,
+			max_index_interval,
+			memtable_flush_period_in_ms,
+			min_index_interval,
+			read_repair_chance,
+			speculative_retry
+		FROM %s
+		WHERE keyspace_name = ?`, tableName)
+
+	var materializedViews []MaterializedViewMetadata
+
+	rows := session.control.query(stmt, keyspaceName).Scanner()
+	for rows.Next() {
+		materializedView := MaterializedViewMetadata{Keyspace: keyspaceName}
+		err := rows.Scan(&materializedView.Name,
+			&materializedView.BaseTableId,
+			&materializedView.baseTableName,
+			&materializedView.BloomFilterFpChance,
+			&materializedView.Caching,
+			&materializedView.Comment,
+			&materializedView.Compaction,
+			&materializedView.Compression,
+			&materializedView.CrcCheckChance,
+			&materializedView.DcLocalReadRepairChance,
+			&materializedView.DefaultTimeToLive,
+			&materializedView.Extensions,
+			&materializedView.GcGraceSeconds,
+			&materializedView.Id,
+			&materializedView.IncludeAllColumns,
+			&materializedView.MaxIndexInterval,
+			&materializedView.MemtableFlushPeriodInMs,
+			&materializedView.MinIndexInterval,
+			&materializedView.ReadRepairChance,
+			&materializedView.SpeculativeRetry,
+		)
+		if err != nil {
+			return nil, err
+		}
+		materializedViews = append(materializedViews, materializedView)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return materializedViews, nil
+}
+
+func getFunctionsMetadata(session *Session, keyspaceName string) ([]FunctionMetadata, error) {
+	if session.cfg.ProtoVersion == protoVersion1 || !session.hasAggregatesAndFunctions {
+		return nil, nil
+	}
+	var tableName string
+	if session.useSystemSchema {
+		tableName = "system_schema.functions"
+	} else {
+		tableName = "system.schema_functions"
+	}
+	stmt := fmt.Sprintf(`
+		SELECT
+			function_name,
+			argument_types,
+			argument_names,
+			body,
+			called_on_null_input,
+			language,
+			return_type
+		FROM %s
+		WHERE keyspace_name = ?`, tableName)
+
+	var functions []FunctionMetadata
+
+	rows := session.control.query(stmt, keyspaceName).Scanner()
+	for rows.Next() {
+		function := FunctionMetadata{Keyspace: keyspaceName}
+		var argumentTypes []string
+		var returnType string
+		err := rows.Scan(&function.Name,
+			&argumentTypes,
+			&function.ArgumentNames,
+			&function.Body,
+			&function.CalledOnNullInput,
+			&function.Language,
+			&returnType,
+		)
+		if err != nil {
+			return nil, err
+		}
+		function.ReturnType = getTypeInfo(returnType)
+		function.ArgumentTypes = make([]TypeInfo, len(argumentTypes))
+		for i, argumentType := range argumentTypes {
+			function.ArgumentTypes[i] = getTypeInfo(argumentType)
+		}
+		functions = append(functions, function)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return functions, nil
+}
+
+func getAggregatesMetadata(session *Session, keyspaceName string) ([]AggregateMetadata, error) {
+	if session.cfg.ProtoVersion == protoVersion1 || !session.hasAggregatesAndFunctions {
+		return nil, nil
+	}
+	var tableName string
+	if session.useSystemSchema {
+		tableName = "system_schema.aggregates"
+	} else {
+		tableName = "system.schema_aggregates"
+	}
+
+	stmt := fmt.Sprintf(`
+		SELECT
+			aggregate_name,
+			argument_types,
+			final_func,
+			initcond,
+			return_type,
+			state_func,
+			state_type
+		FROM %s
+		WHERE keyspace_name = ?`, tableName)
+
+	var aggregates []AggregateMetadata
+
+	rows := session.control.query(stmt, keyspaceName).Scanner()
+	for rows.Next() {
+		aggregate := AggregateMetadata{Keyspace: keyspaceName}
+		var argumentTypes []string
+		var returnType string
+		var stateType string
+		err := rows.Scan(&aggregate.Name,
+			&argumentTypes,
+			&aggregate.finalFunc,
+			&aggregate.InitCond,
+			&returnType,
+			&aggregate.stateFunc,
+			&stateType,
+		)
+		if err != nil {
+			return nil, err
+		}
+		aggregate.ReturnType = getTypeInfo(returnType)
+		aggregate.StateType = getTypeInfo(stateType)
+		aggregate.ArgumentTypes = make([]TypeInfo, len(argumentTypes))
+		for i, argumentType := range argumentTypes {
+			aggregate.ArgumentTypes[i] = getTypeInfo(argumentType)
+		}
+		aggregates = append(aggregates, aggregate)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return aggregates, nil
 }
 
 // type definition parser state

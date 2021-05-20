@@ -20,6 +20,9 @@ const PERMISSIONS_RESPONSE = {
       'baz/biz': {
         capabilities: ['read'],
       },
+      'ends/in/slash/': {
+        capabilities: ['list'],
+      },
     },
   },
 };
@@ -74,6 +77,13 @@ module('Unit | Service | permissions', function(hooks) {
     let service = this.owner.lookup('service:permissions');
     service.set('globPaths', PERMISSIONS_RESPONSE.data.glob_paths);
     assert.equal(service.hasPermission('boo'), false);
+  });
+
+  test('it returns true if passed path does not end in a slash but globPath does', function(assert) {
+    let service = this.owner.lookup('service:permissions');
+    service.set('globPaths', PERMISSIONS_RESPONSE.data.glob_paths);
+    assert.equal(service.hasPermission('ends/in/slash'), true, 'matches without slash');
+    assert.equal(service.hasPermission('ends/in/slash/'), true, 'matches with slash');
   });
 
   test('it returns false if a policy does not includes access to a path', function(assert) {
@@ -138,7 +148,7 @@ module('Unit | Service | permissions', function(hooks) {
       'sys/auth': {
         capabilities: ['deny'],
       },
-      'identity/entities': {
+      'identity/entity/id': {
         capabilities: ['read'],
       },
     };
@@ -147,24 +157,32 @@ module('Unit | Service | permissions', function(hooks) {
     assert.deepEqual(service.navPathParams('access'), expected);
   });
 
-  test('hasNavPermission returns true if a policy includes access to at least one path', function(assert) {
+  test('hasNavPermission returns true if a policy includes the required capabilities for at least one path', function(assert) {
     let service = this.owner.lookup('service:permissions');
     const accessPaths = {
       'sys/auth': {
         capabilities: ['deny'],
       },
-      'sys/leases/lookup': {
+      'identity/group/id': {
+        capabilities: ['list', 'read'],
+      },
+    };
+    service.set('exactPaths', accessPaths);
+    assert.equal(service.hasNavPermission('access', 'groups'), true);
+  });
+
+  test('hasNavPermission returns false if a policy does not include the required capabilities for at least one path', function(assert) {
+    let service = this.owner.lookup('service:permissions');
+    const accessPaths = {
+      'sys/auth': {
+        capabilities: ['deny'],
+      },
+      'identity/group/id': {
         capabilities: ['read'],
       },
     };
     service.set('exactPaths', accessPaths);
-    assert.equal(service.hasNavPermission('access', 'leases'), true);
-  });
-
-  test('hasNavPermission returns false if a policy does not include access to any paths', function(assert) {
-    let service = this.owner.lookup('service:permissions');
-    service.set('exactPaths', {});
-    assert.equal(service.hasNavPermission('access'), false);
+    assert.equal(service.hasNavPermission('access', 'groups'), false);
   });
 
   test('appends the namespace to the path if there is one', function(assert) {

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func TestACL_NewACL(t *testing.T) {
@@ -20,7 +20,7 @@ func TestACL_NewACL(t *testing.T) {
 
 func testNewACL(t *testing.T, ns *namespace.Namespace) {
 	ctx := namespace.ContextWithNamespace(context.Background(), ns)
-	policy := []*Policy{&Policy{Name: "root"}}
+	policy := []*Policy{{Name: "root"}}
 	_, err := NewACL(ctx, policy)
 	switch ns.ID {
 	case namespace.RootNamespaceID:
@@ -100,7 +100,7 @@ path "secret/split/definition" {
 func TestACL_Capabilities(t *testing.T) {
 	t.Run("root-ns", func(t *testing.T) {
 		t.Parallel()
-		policy := []*Policy{&Policy{Name: "root"}}
+		policy := []*Policy{{Name: "root"}}
 		ctx := namespace.RootContext(nil)
 		acl, err := NewACL(ctx, policy)
 		if err != nil {
@@ -158,7 +158,7 @@ func TestACL_Root(t *testing.T) {
 func testACLRoot(t *testing.T, ns *namespace.Namespace) {
 	// Create the root policy ACL. Always create on root namespace regardless of
 	// which namespace to ACL check on.
-	policy := []*Policy{&Policy{Name: "root"}}
+	policy := []*Policy{{Name: "root"}}
 	acl, err := NewACL(namespace.RootContext(nil), policy)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -237,6 +237,26 @@ func testACLSingle(t *testing.T, ns *namespace.Namespace) {
 		{logical.ListOperation, "foo/bar", false, true},
 		{logical.UpdateOperation, "foo/bar", false, true},
 		{logical.CreateOperation, "foo/bar", true, true},
+
+		// Path segment wildcards
+		{logical.ReadOperation, "test/foo/bar/segment", false, false},
+		{logical.ReadOperation, "test/foo/segment", true, false},
+		{logical.ReadOperation, "test/bar/segment", true, false},
+		{logical.ReadOperation, "test/segment/at/frond", false, false},
+		{logical.ReadOperation, "test/segment/at/front", true, false},
+		{logical.ReadOperation, "test/segment/at/end/foo", true, false},
+		{logical.ReadOperation, "test/segment/at/end/foo/", false, false},
+		{logical.ReadOperation, "test/segment/at/end/v2/foo/", true, false},
+		{logical.ReadOperation, "test/segment/wildcard/at/foo/", true, false},
+		{logical.ReadOperation, "test/segment/wildcard/at/end", true, false},
+		{logical.ReadOperation, "test/segment/wildcard/at/end/", true, false},
+
+		// Path segment wildcards vs glob
+		{logical.ReadOperation, "1/2/3/4", false, false},
+		{logical.ReadOperation, "1/2/3", true, false},
+		{logical.UpdateOperation, "1/2/3", false, false},
+		{logical.UpdateOperation, "1/2/3/4", true, false},
+		{logical.CreateOperation, "1/2/3/4/5", true, false},
 	}
 
 	for _, tc := range tcases {
@@ -339,6 +359,13 @@ func testLayeredACL(t *testing.T, acl *ACL, ns *namespace.Namespace) {
 	}
 }
 
+func TestACL_ParseMalformedPolicy(t *testing.T) {
+	_, err := ParseACLPolicy(namespace.RootNamespace, `name{}`)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
 func TestACL_PolicyMerge(t *testing.T) {
 	t.Run("root-ns", func(t *testing.T) {
 		t.Parallel()
@@ -372,14 +399,14 @@ func testACLPolicyMerge(t *testing.T, ns *namespace.Namespace) {
 	}
 
 	tcases := []tcase{
-		{"foo/bar", nil, nil, nil, map[string][]interface{}{"zip": []interface{}{}, "baz": []interface{}{}}, []string{"baz"}},
-		{"hello/universe", createDuration(50), createDuration(200), map[string][]interface{}{"foo": []interface{}{}, "bar": []interface{}{}}, nil, []string{"foo", "bar"}},
-		{"allow/all", nil, nil, map[string][]interface{}{"*": []interface{}{}, "test": []interface{}{}, "test1": []interface{}{"foo"}}, nil, nil},
-		{"allow/all1", nil, nil, map[string][]interface{}{"*": []interface{}{}, "test": []interface{}{}, "test1": []interface{}{"foo"}}, nil, nil},
-		{"deny/all", nil, nil, nil, map[string][]interface{}{"*": []interface{}{}, "test": []interface{}{}}, nil},
-		{"deny/all1", nil, nil, nil, map[string][]interface{}{"*": []interface{}{}, "test": []interface{}{}}, nil},
-		{"value/merge", nil, nil, map[string][]interface{}{"test": []interface{}{3, 4, 1, 2}}, map[string][]interface{}{"test": []interface{}{3, 4, 1, 2}}, nil},
-		{"value/empty", nil, nil, map[string][]interface{}{"empty": []interface{}{}}, map[string][]interface{}{"empty": []interface{}{}}, nil},
+		{"foo/bar", nil, nil, nil, map[string][]interface{}{"zip": {}, "baz": {}}, []string{"baz"}},
+		{"hello/universe", createDuration(50), createDuration(200), map[string][]interface{}{"foo": {}, "bar": {}}, nil, []string{"foo", "bar"}},
+		{"allow/all", nil, nil, map[string][]interface{}{"*": {}, "test": {}, "test1": {"foo"}}, nil, nil},
+		{"allow/all1", nil, nil, map[string][]interface{}{"*": {}, "test": {}, "test1": {"foo"}}, nil, nil},
+		{"deny/all", nil, nil, nil, map[string][]interface{}{"*": {}, "test": {}}, nil},
+		{"deny/all1", nil, nil, nil, map[string][]interface{}{"*": {}, "test": {}}, nil},
+		{"value/merge", nil, nil, map[string][]interface{}{"test": {3, 4, 1, 2}}, map[string][]interface{}{"test": {3, 4, 1, 2}}, nil},
+		{"value/empty", nil, nil, map[string][]interface{}{"empty": {}}, map[string][]interface{}{"empty": {}}, nil},
 	}
 
 	for _, tc := range tcases {
@@ -529,6 +556,8 @@ func testACLValuePermissions(t *testing.T, ns *namespace.Namespace) {
 		{"foo/bar", []string{"deny"}, []interface{}{"bad glob"}, false},
 		{"foo/bar", []string{"deny"}, []interface{}{"good"}, true},
 		{"foo/bar", []string{"allow"}, []interface{}{"good"}, true},
+		{"foo/bar", []string{"deny"}, []interface{}{nil}, true},
+		{"foo/bar", []string{"allow"}, []interface{}{nil}, true},
 		{"foo/baz", []string{"aLLow"}, []interface{}{"good"}, true},
 		{"foo/baz", []string{"deny"}, []interface{}{"bad"}, false},
 		{"foo/baz", []string{"deny"}, []interface{}{"good"}, false},
@@ -537,6 +566,7 @@ func testACLValuePermissions(t *testing.T, ns *namespace.Namespace) {
 		{"foo/baz", []string{"deNy", "allow"}, []interface{}{"bad", "good"}, false},
 		{"foo/baz", []string{"aLLow"}, []interface{}{"bad"}, false},
 		{"foo/baz", []string{"Neither"}, []interface{}{"bad"}, false},
+		{"foo/baz", []string{"allow"}, []interface{}{nil}, false},
 		{"fizz/buzz", []string{"allow_multi"}, []interface{}{"good"}, true},
 		{"fizz/buzz", []string{"allow_multi"}, []interface{}{"good1"}, true},
 		{"fizz/buzz", []string{"allow_multi"}, []interface{}{"good2"}, true},
@@ -577,6 +607,197 @@ func testACLValuePermissions(t *testing.T, ns *namespace.Namespace) {
 				t.Fatalf("bad: case %#v: %v", tc, authResults.Allowed)
 			}
 		}
+	}
+}
+
+func TestACL_SegmentWildcardPriority(t *testing.T) {
+	ns := namespace.RootNamespace
+	ctx := namespace.ContextWithNamespace(context.Background(), ns)
+	type poltest struct {
+		policy string
+		path   string
+	}
+
+	// These test cases should each have a read rule and an update rule, where
+	// the update rule wins out due to being more specific.
+	poltests := []poltest{
+
+		{
+			// Verify edge conditions.  Here '*' is more specific both because
+			// of first wildcard position (0 vs -1/infinity) and #wildcards.
+			`
+path "+/*" { capabilities = ["read"] }
+path "*" { capabilities = ["update"] }
+`,
+			"foo/bar/bar/baz",
+		},
+		{
+			// Verify edge conditions.  Here '+/*' is less specific because of
+			// first wildcard position.
+			`
+path "+/*" { capabilities = ["read"] }
+path "foo/+/*" { capabilities = ["update"] }
+`,
+			"foo/bar/bar/baz",
+		},
+		{
+			// Verify that more wildcard segments is lower priority.
+			`
+path "foo/+/+/*" { capabilities = ["read"] }
+path "foo/+/bar/baz" { capabilities = ["update"] }
+`,
+			"foo/bar/bar/baz",
+		},
+		{
+			// Verify that more wildcard segments is lower priority.
+			`
+path "foo/+/+/baz" { capabilities = ["read"] }
+path "foo/+/bar/baz" { capabilities = ["update"] }
+`,
+			"foo/bar/bar/baz",
+		},
+		{
+			// Verify that first wildcard position is lower priority.
+			// '(' is used here because it is lexicographically smaller than "+"
+			`
+path "foo/+/(ar/baz" { capabilities = ["read"] }
+path "foo/(ar/+/baz" { capabilities = ["update"] }
+`,
+			"foo/(ar/(ar/baz",
+		},
+
+		{
+			// Verify that a glob has lower priority, even if the prefix is the
+			// same otherwise.
+			`
+path "foo/bar/+/baz*" { capabilities = ["read"] }
+path "foo/bar/+/baz" { capabilities = ["update"] }
+`,
+			"foo/bar/bar/baz",
+		},
+		{
+			// Verify that a shorter prefix has lower priority.
+			`
+path "foo/bar/+/b*" { capabilities = ["read"] }
+path "foo/bar/+/ba*" { capabilities = ["update"] }
+`,
+			"foo/bar/bar/baz",
+		},
+	}
+
+	for i, pt := range poltests {
+		policy, err := ParseACLPolicy(ns, pt.policy)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		acl, err := NewACL(ctx, []*Policy{policy})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		request := new(logical.Request)
+		request.Path = pt.path
+
+		request.Operation = logical.UpdateOperation
+		authResults := acl.AllowOperation(ctx, request, false)
+		if !authResults.Allowed {
+			t.Fatalf("bad: case %d %#v: %v", i, pt, authResults.Allowed)
+		}
+
+		request.Operation = logical.ReadOperation
+		authResults = acl.AllowOperation(ctx, request, false)
+		if authResults.Allowed {
+			t.Fatalf("bad: case %d %#v: %v", i, pt, authResults.Allowed)
+		}
+	}
+}
+
+func TestACL_SegmentWildcardPriority_BareMount(t *testing.T) {
+	ns := namespace.RootNamespace
+	ctx := namespace.ContextWithNamespace(context.Background(), ns)
+	type poltest struct {
+		policy    string
+		mountpath string
+		hasperms  bool
+	}
+	// These test cases should have one or more rules and a mount prefix.
+	// hasperms should be true if there are non-deny perms that apply
+	// to the mount prefix or something below it.
+	poltests := []poltest{
+		{
+			`path "+" { capabilities = ["read"] }`,
+			"foo/",
+			true,
+		},
+		{
+			`path "+/*" { capabilities = ["read"] }`,
+			"foo/",
+			true,
+		},
+		{
+			`path "foo/+/+/*" { capabilities = ["read"] }`,
+			"foo/",
+			true,
+		},
+		{
+			`path "foo/+/+/*" { capabilities = ["read"] }`,
+			"foo/bar/",
+			true,
+		},
+		{
+			`path "foo/+/+/*" { capabilities = ["read"] }`,
+			"foo/bar/bar/",
+			true,
+		},
+		{
+			`path "foo/+/+/*" { capabilities = ["read"] }`,
+			"foo/bar/bar/baz/",
+			true,
+		},
+		{
+			`path "foo/+/+/baz" { capabilities = ["read"] }`,
+			"foo/bar/bar/baz/",
+			true,
+		},
+		{
+			`path "foo/+/bar/baz" { capabilities = ["read"] }`,
+			"foo/bar/bar/baz/",
+			true,
+		},
+		{
+			`path "foo/bar/+/baz*" { capabilities = ["read"] }`,
+			"foo/bar/bar/baz/",
+			true,
+		},
+		{
+			`path "foo/bar/+/b*" { capabilities = ["read"] }`,
+			"foo/bar/bar/baz/",
+			true,
+		},
+		{
+			`path "foo/+" { capabilities = ["read"] }`,
+			"foo/",
+			true,
+		},
+	}
+
+	for i, pt := range poltests {
+		policy, err := ParseACLPolicy(ns, pt.policy)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		acl, err := NewACL(ctx, []*Policy{policy})
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		hasperms := nil != acl.CheckAllowedFromNonExactPaths(pt.mountpath, true)
+		if hasperms != pt.hasperms {
+			t.Fatalf("bad: case %d: %#v", i, pt)
+		}
+
 	}
 }
 
@@ -643,6 +864,33 @@ path "sys/*" {
 path "foo/bar" {
 	capabilities = ["read", "create", "sudo"]
 }
+path "test/+/segment" {
+	capabilities = ["read"]
+}
+path "+/segment/at/front" {
+	capabilities = ["read"]
+}
+path "test/segment/at/end/+" {
+	capabilities = ["read"]
+}
+path "test/segment/at/end/v2/+/" {
+	capabilities = ["read"]
+}
+path "test/+/wildcard/+/*" {
+	capabilities = ["read"]
+}
+path "test/+/wildcardglob/+/end*" {
+	capabilities = ["read"]
+}
+path "1/2/*" {
+	capabilities = ["create"]
+}
+path "1/2/+" {
+	capabilities = ["read"]
+}
+path "1/2/+/+" {
+	capabilities = ["update"]
+}
 `
 
 var aclPolicy2 = `
@@ -666,7 +914,7 @@ path "foo/bar" {
 }
 `
 
-//test merging
+// test merging
 var mergingPolicies = `
 name = "ops"
 path "foo/bar" {
@@ -788,7 +1036,7 @@ path "value/empty" {
 }
 `
 
-//allow operation testing
+// allow operation testing
 var permissionsPolicy = `
 name = "dev"
 path "dev/*" {
@@ -878,7 +1126,7 @@ path "var/req" {
 }
 `
 
-//allow operation testing
+// allow operation testing
 var valuePermissionsPolicy = `
 name = "op"
 path "dev/*" {

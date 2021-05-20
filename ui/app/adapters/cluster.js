@@ -1,3 +1,4 @@
+import AdapterError from '@ember-data/adapter/error';
 import { inject as service } from '@ember/service';
 import { assign } from '@ember/polyfills';
 import { hash, resolve } from 'rsvp';
@@ -5,9 +6,6 @@ import { assert } from '@ember/debug';
 import { pluralize } from 'ember-inflector';
 
 import ApplicationAdapter from './application';
-import DS from 'ember-data';
-
-const { AdapterError } = DS;
 
 const ENDPOINTS = [
   'health',
@@ -44,7 +42,7 @@ export default ApplicationAdapter.extend({
       health: this.health(),
       sealStatus: this.sealStatus().catch(e => e),
     };
-    if (this.get('version.isEnterprise') && this.get('namespaceService.inRootNamespace')) {
+    if (this.version.isEnterprise && this.namespaceService.inRootNamespace) {
       fetches.replicationStatus = this.replicationStatus().catch(e => e);
     }
     return hash(fetches).then(({ health, sealStatus, replicationStatus }) => {
@@ -109,7 +107,7 @@ export default ApplicationAdapter.extend({
   },
 
   authenticate({ backend, data }) {
-    const { token, password, username, path } = data;
+    const { role, jwt, token, password, username, path } = data;
     const url = this.urlForAuth(backend, username, path);
     const verb = backend === 'token' ? 'GET' : 'POST';
     let options = {
@@ -119,6 +117,8 @@ export default ApplicationAdapter.extend({
       options.headers = {
         'X-Vault-Token': token,
       };
+    } else if (backend === 'jwt' || backend === 'oidc') {
+      options.data = { role, jwt };
     } else {
       options.data = token ? { token, password } : { password };
     }
@@ -139,9 +139,12 @@ export default ApplicationAdapter.extend({
     const authBackend = type.toLowerCase();
     const authURLs = {
       github: 'login',
+      jwt: 'login',
+      oidc: 'login',
       userpass: `login/${encodeURIComponent(username)}`,
       ldap: `login/${encodeURIComponent(username)}`,
       okta: `login/${encodeURIComponent(username)}`,
+      radius: `login/${encodeURIComponent(username)}`,
       token: 'lookup-self',
     };
     const urlSuffix = authURLs[authBackend];
@@ -178,7 +181,10 @@ export default ApplicationAdapter.extend({
   },
 
   generateDrOperationToken(data, options) {
-    const verb = options && options.checkStatus ? 'GET' : 'PUT';
+    let verb = options && options.checkStatus ? 'GET' : 'PUT';
+    if (options.cancel) {
+      verb = 'DELETE';
+    }
     let url = `${this.buildURL()}/replication/dr/secondary/generate-operation-token/`;
     if (!data || data.pgp_key || data.attempt) {
       // start the generation

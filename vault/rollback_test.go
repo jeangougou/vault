@@ -9,8 +9,8 @@ import (
 	log "github.com/hashicorp/go-hclog"
 	uuid "github.com/hashicorp/go-uuid"
 
-	"github.com/hashicorp/vault/helper/logging"
 	"github.com/hashicorp/vault/helper/namespace"
+	"github.com/hashicorp/vault/sdk/helper/logging"
 )
 
 // mockRollback returns a mock rollback manager
@@ -24,7 +24,7 @@ func mockRollback(t *testing.T) (*RollbackManager, *NoopBackend) {
 	view := NewBarrierView(barrier, "logical/")
 
 	mounts.Entries = []*MountEntry{
-		&MountEntry{
+		{
 			Path:        "foo",
 			NamespaceID: namespace.RootNamespaceID,
 			namespace:   namespace.RootNamespace,

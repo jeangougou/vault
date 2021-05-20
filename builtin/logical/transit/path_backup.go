@@ -3,15 +3,15 @@ package transit
 import (
 	"context"
 
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func (b *backend) pathBackup() *framework.Path {
 	return &framework.Path{
 		Pattern: "backup/" + framework.GenericNameRegex("name"),
 		Fields: map[string]*framework.FieldSchema{
-			"name": &framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
 				Description: "Name of the key",
 			},
@@ -39,5 +39,7 @@ func (b *backend) pathBackupRead(ctx context.Context, req *logical.Request, d *f
 	}, nil
 }
 
-const pathBackupHelpSyn = `Backup the named key`
-const pathBackupHelpDesc = `This path is used to backup the named key.`
+const (
+	pathBackupHelpSyn  = `Backup the named key`
+	pathBackupHelpDesc = `This path is used to backup the named key.`
+)

@@ -1,4 +1,4 @@
-# Vault [![Build Status](https://travis-ci.org/hashicorp/vault.svg)](https://travis-ci.org/hashicorp/vault) [![Join the chat at https://gitter.im/hashicorp-vault/Lobby](https://badges.gitter.im/hashicorp-vault/Lobby.svg)](https://gitter.im/hashicorp-vault/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge) [![vault enterprise](https://img.shields.io/badge/vault-enterprise-yellow.svg?colorB=7c8797&colorA=000000)](https://www.hashicorp.com/products/vault/?utm_source=github&utm_medium=banner&utm_campaign=github-vault-enterprise)
+# Vault [![CircleCI](https://circleci.com/gh/hashicorp/vault.svg?style=svg)](https://circleci.com/gh/hashicorp/vault) [![vault enterprise](https://img.shields.io/badge/vault-enterprise-yellow.svg?colorB=7c8797&colorA=000000)](https://www.hashicorp.com/products/vault/?utm_source=github&utm_medium=banner&utm_campaign=github-vault-enterprise)
 
 ----
 
@@ -9,7 +9,10 @@
 -	Website: https://www.vaultproject.io
 -	IRC: `#vault-tool` on Freenode
 -	Announcement list: [Google Groups](https://groups.google.com/group/hashicorp-announce)
--	Discussion list: [Google Groups](https://groups.google.com/group/vault-tool)
+-	Discussion forum: [Discuss](https://discuss.hashicorp.com/c/vault)
+- Documentation: [https://www.vaultproject.io/docs/](https://www.vaultproject.io/docs/)
+- Tutorials: [HashiCorp's Learn Platform](https://learn.hashicorp.com/vault)
+- Certification Exam: [Vault Associate](https://www.hashicorp.com/certification/#hashicorp-certified-vault-associate)
 
 <img width="300" alt="Vault Logo" src="https://github.com/hashicorp/vault/blob/f22d202cde2018f9455dec755118a9b84586e082/Vault_PrimaryLogo_Black.png">
 
@@ -47,25 +50,34 @@ The key features of Vault are:
   Revocation assists in key rolling as well as locking down systems in the
   case of an intrusion.
 
-For more information, see the [getting started guide](https://learn.hashicorp.com/vault/)
-on Hashicorp's learning platform.
-
-Getting Started & Documentation
+Documentation, Getting Started, and Certification Exams
 -------------------------------
 
-All documentation is available on the [Vault website](https://www.vaultproject.io).
+Documentation is available on the [Vault website](https://www.vaultproject.io/docs/).
+
+If you're new to Vault and want to get started with security automation, please
+check out our [Getting Started guides](https://learn.hashicorp.com/collections/vault/getting-started)
+on HashiCorp's learning platform. There are also [additional guides](https://learn.hashicorp.com/vault)
+to continue your learning.
+
+Show off your Vault knowledge by passing a certification exam. Visit the
+[certification page](https://www.hashicorp.com/certification/#hashicorp-certified-vault-associate)
+for information about exams and find [study materials](https://learn.hashicorp.com/collections/vault/certification)
+on HashiCorp's learning platform.
 
 Developing Vault
 --------------------
 
 If you wish to work on Vault itself or any of its built-in systems, you'll
-first need [Go](https://www.golang.org) installed on your machine (version
-1.11+ is *required*).
+first need [Go](https://www.golang.org) installed on your machine. Go version
+1.16.2+ is *required*.
 
 For local dev first make sure Go is properly installed, including setting up a
-[GOPATH](https://golang.org/doc/code.html#GOPATH). Next, clone this repository
-into `$GOPATH/src/github.com/hashicorp/vault`. You can then download any
-required build tools by bootstrapping your environment:
+[GOPATH](https://golang.org/doc/code.html#GOPATH). Ensure that `$GOPATH/bin` is in
+your path as some distributions bundle old version of build tools. Next, clone this
+repository. Vault uses [Go Modules](https://github.com/golang/go/wiki/Modules),
+so it is recommended that you clone the repository ***outside*** of the GOPATH.
+You can then download any required build tools by bootstrapping your environment:
 
 ```sh
 $ make bootstrap
@@ -77,6 +89,16 @@ put the Vault binary in the `bin` and `$GOPATH/bin` folders:
 
 ```sh
 $ make dev
+...
+$ bin/vault
+...
+```
+
+To compile a development version of Vault with the UI, run `make static-dist dev-ui`. This will
+put the Vault binary in the `bin` and `$GOPATH/bin` folders:
+
+```sh
+$ make static-dist dev-ui
 ...
 $ bin/vault
 ...

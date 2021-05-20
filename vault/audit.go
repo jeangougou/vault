@@ -9,10 +9,11 @@ import (
 
 	uuid "github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/audit"
-	"github.com/hashicorp/vault/helper/jsonutil"
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/helper/salt"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/jsonutil"
+	"github.com/hashicorp/vault/sdk/helper/salt"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 const (
@@ -34,10 +35,26 @@ const (
 	auditTableType = "audit"
 )
 
-var (
-	// loadAuditFailed if loading audit tables encounters an error
-	errLoadAuditFailed = errors.New("failed to setup audit table")
-)
+// loadAuditFailed if loading audit tables encounters an error
+var errLoadAuditFailed = errors.New("failed to setup audit table")
+
+func (c *Core) generateAuditTestProbe() (*logical.LogInput, error) {
+	requestId, err := uuid.GenerateUUID()
+	if err != nil {
+		return nil, err
+	}
+	return &logical.LogInput{
+		Type: "request",
+		Auth: nil,
+		Request: &logical.Request{
+			ID:        requestId,
+			Operation: "update",
+			Path:      "sys/audit/test",
+		},
+		Response: nil,
+		OuterErr: nil,
+	}, nil
+}
 
 // enableAudit is used to enable a new audit backend
 func (c *Core) enableAudit(ctx context.Context, entry *MountEntry, updateStorage bool) error {
@@ -102,6 +119,20 @@ func (c *Core) enableAudit(ctx context.Context, entry *MountEntry, updateStorage
 		return fmt.Errorf("nil audit backend of type %q returned from factory", entry.Type)
 	}
 
+	if entry.Options["skip_test"] != "true" {
+		// Test the new audit device and report failure if it doesn't work.
+		testProbe, err := c.generateAuditTestProbe()
+		if err != nil {
+			return err
+		}
+		err = backend.LogTestMessage(ctx, testProbe, entry.Options)
+		if err != nil {
+			c.logger.Error("new audit backend failed test", "path", entry.Path, "type", entry.Type, "error", err)
+			return fmt.Errorf("audit backend failed test message: %w", err)
+
+		}
+	}
+
 	newTable := c.audit.shallowClone()
 	newTable.Entries = append(newTable.Entries, entry)
 
@@ -134,6 +165,11 @@ func (c *Core) disableAudit(ctx context.Context, path string, updateStorage bool
 	// Ensure we end the path in a slash
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
+	}
+
+	// Ensure there is a name
+	if path == "/" {
+		return false, fmt.Errorf("backend path must be specified")
 	}
 
 	// Remove the entry from the mount table
@@ -468,7 +504,7 @@ func (c *Core) newAuditBackend(ctx context.Context, entry *MountEntry, view logi
 			}
 		}
 
-		c.reloadFuncs[key] = append(c.reloadFuncs[key], func(map[string]interface{}) error {
+		c.reloadFuncs[key] = append(c.reloadFuncs[key], func() error {
 			if auditLogger.IsInfo() {
 				auditLogger.Info("reloading file audit backend", "path", entry.Path)
 			}
@@ -499,4 +535,47 @@ func defaultAuditTable() *MountTable {
 		Type: auditTableType,
 	}
 	return table
+}
+
+type AuditLogger interface {
+	AuditRequest(ctx context.Context, input *logical.LogInput) error
+	AuditResponse(ctx context.Context, input *logical.LogInput) error
+}
+
+type basicAuditor struct {
+	c *Core
+}
+
+func (b *basicAuditor) AuditRequest(ctx context.Context, input *logical.LogInput) error {
+	if b.c.auditBroker == nil {
+		return consts.ErrSealed
+	}
+	return b.c.auditBroker.LogRequest(ctx, input, b.c.auditedHeaders)
+}
+
+func (b *basicAuditor) AuditResponse(ctx context.Context, input *logical.LogInput) error {
+	if b.c.auditBroker == nil {
+		return consts.ErrSealed
+	}
+	return b.c.auditBroker.LogResponse(ctx, input, b.c.auditedHeaders)
+}
+
+type genericAuditor struct {
+	c         *Core
+	mountType string
+	namespace *namespace.Namespace
+}
+
+func (g genericAuditor) AuditRequest(ctx context.Context, input *logical.LogInput) error {
+	ctx = namespace.ContextWithNamespace(ctx, g.namespace)
+	logInput := *input
+	logInput.Type = g.mountType + "-request"
+	return g.c.auditBroker.LogRequest(ctx, &logInput, g.c.auditedHeaders)
+}
+
+func (g genericAuditor) AuditResponse(ctx context.Context, input *logical.LogInput) error {
+	ctx = namespace.ContextWithNamespace(ctx, g.namespace)
+	logInput := *input
+	logInput.Type = g.mountType + "-response"
+	return g.c.auditBroker.LogResponse(ctx, &logInput, g.c.auditedHeaders)
 }

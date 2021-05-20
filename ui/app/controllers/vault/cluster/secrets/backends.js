@@ -9,7 +9,7 @@ export default Controller.extend({
   displayableBackends: filterBy('model', 'shouldIncludeInList'),
 
   supportedBackends: computed('displayableBackends', 'displayableBackends.[]', function() {
-    return (this.get('displayableBackends') || [])
+    return (this.displayableBackends || [])
       .filter(backend => LINKED_BACKENDS.includes(backend.get('engineType')))
       .sortBy('id');
   }),
@@ -20,9 +20,9 @@ export default Controller.extend({
     'supportedBackends',
     'supportedBackends.[]',
     function() {
-      return (this.get('displayableBackends') || [])
+      return (this.displayableBackends || [])
         .slice()
-        .removeObjects(this.get('supportedBackends'))
+        .removeObjects(this.supportedBackends)
         .sortBy('id');
     }
   ),
@@ -31,10 +31,10 @@ export default Controller.extend({
     const { engineType, path } = engine;
     try {
       yield engine.destroyRecord();
-      this.get('flashMessages').success(`The ${engineType} secrets engine at ${path} has been disabled.`);
+      this.flashMessages.success(`The ${engineType} Secrets Engine at ${path} has been disabled.`);
     } catch (err) {
-      this.get('flashMessages').danger(
-        `There was an error disabling the ${engineType} secrets engine at ${path}: ${err.errors.join(' ')}.`
+      this.flashMessages.danger(
+        `There was an error disabling the ${engineType} Secrets Engine at ${path}: ${err.errors.join(' ')}.`
       );
     }
   }).drop(),

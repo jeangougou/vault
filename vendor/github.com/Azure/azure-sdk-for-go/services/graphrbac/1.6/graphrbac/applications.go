@@ -23,6 +23,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/Azure/go-autorest/autorest/validation"
+	"github.com/Azure/go-autorest/tracing"
 	"net/http"
 )
 
@@ -36,7 +37,8 @@ func NewApplicationsClient(tenantID string) ApplicationsClient {
 	return NewApplicationsClientWithBaseURI(DefaultBaseURI, tenantID)
 }
 
-// NewApplicationsClientWithBaseURI creates an instance of the ApplicationsClient client.
+// NewApplicationsClientWithBaseURI creates an instance of the ApplicationsClient client using a custom endpoint.  Use
+// this when interacting with an Azure cloud that uses a non-standard base URI (sovereign clouds, Azure stack).
 func NewApplicationsClientWithBaseURI(baseURI string, tenantID string) ApplicationsClient {
 	return ApplicationsClient{NewWithBaseURI(baseURI, tenantID)}
 }
@@ -46,7 +48,17 @@ func NewApplicationsClientWithBaseURI(baseURI string, tenantID string) Applicati
 // applicationObjectID - the object ID of the application to which to add the owner.
 // parameters - the URL of the owner object, such as
 // https://graph.windows.net/0b1f9851-1bf0-433f-aec3-cb9272f093dc/directoryObjects/f260bbc4-c254-447b-94cf-293b5ec434dd.
-func (client ApplicationsClient) AddOwner(ctx context.Context, applicationObjectID string, parameters ApplicationAddOwnerParameters) (result autorest.Response, err error) {
+func (client ApplicationsClient) AddOwner(ctx context.Context, applicationObjectID string, parameters AddOwnerParameters) (result autorest.Response, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.AddOwner")
+		defer func() {
+			sc := -1
+			if result.Response != nil {
+				sc = result.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	if err := validation.Validate([]validation.Validation{
 		{TargetValue: parameters,
 			Constraints: []validation.Constraint{{Target: "parameters.URL", Name: validation.Null, Rule: true, Chain: nil}}}}); err != nil {
@@ -69,13 +81,14 @@ func (client ApplicationsClient) AddOwner(ctx context.Context, applicationObject
 	result, err = client.AddOwnerResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "AddOwner", resp, "Failure responding to request")
+		return
 	}
 
 	return
 }
 
 // AddOwnerPreparer prepares the AddOwner request.
-func (client ApplicationsClient) AddOwnerPreparer(ctx context.Context, applicationObjectID string, parameters ApplicationAddOwnerParameters) (*http.Request, error) {
+func (client ApplicationsClient) AddOwnerPreparer(ctx context.Context, applicationObjectID string, parameters AddOwnerParameters) (*http.Request, error) {
 	pathParameters := map[string]interface{}{
 		"applicationObjectId": autorest.Encode("path", applicationObjectID),
 		"tenantID":            autorest.Encode("path", client.TenantID),
@@ -99,8 +112,7 @@ func (client ApplicationsClient) AddOwnerPreparer(ctx context.Context, applicati
 // AddOwnerSender sends the AddOwner request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) AddOwnerSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // AddOwnerResponder handles the response to the AddOwner request. The method always
@@ -108,7 +120,6 @@ func (client ApplicationsClient) AddOwnerSender(req *http.Request) (*http.Respon
 func (client ApplicationsClient) AddOwnerResponder(resp *http.Response) (result autorest.Response, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusNoContent),
 		autorest.ByClosing())
 	result.Response = resp
@@ -119,11 +130,19 @@ func (client ApplicationsClient) AddOwnerResponder(resp *http.Response) (result 
 // Parameters:
 // parameters - the parameters for creating an application.
 func (client ApplicationsClient) Create(ctx context.Context, parameters ApplicationCreateParameters) (result Application, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.Create")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	if err := validation.Validate([]validation.Validation{
 		{TargetValue: parameters,
-			Constraints: []validation.Constraint{{Target: "parameters.AvailableToOtherTenants", Name: validation.Null, Rule: true, Chain: nil},
-				{Target: "parameters.DisplayName", Name: validation.Null, Rule: true, Chain: nil},
-				{Target: "parameters.IdentifierUris", Name: validation.Null, Rule: true, Chain: nil}}}}); err != nil {
+			Constraints: []validation.Constraint{{Target: "parameters.DisplayName", Name: validation.Null, Rule: true, Chain: nil}}}}); err != nil {
 		return result, validation.NewError("graphrbac.ApplicationsClient", "Create", err.Error())
 	}
 
@@ -143,6 +162,7 @@ func (client ApplicationsClient) Create(ctx context.Context, parameters Applicat
 	result, err = client.CreateResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Create", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -172,8 +192,7 @@ func (client ApplicationsClient) CreatePreparer(ctx context.Context, parameters 
 // CreateSender sends the Create request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) CreateSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // CreateResponder handles the response to the Create request. The method always
@@ -181,7 +200,6 @@ func (client ApplicationsClient) CreateSender(req *http.Request) (*http.Response
 func (client ApplicationsClient) CreateResponder(resp *http.Response) (result Application, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusCreated),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -193,6 +211,16 @@ func (client ApplicationsClient) CreateResponder(resp *http.Response) (result Ap
 // Parameters:
 // applicationObjectID - application object ID.
 func (client ApplicationsClient) Delete(ctx context.Context, applicationObjectID string) (result autorest.Response, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.Delete")
+		defer func() {
+			sc := -1
+			if result.Response != nil {
+				sc = result.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.DeletePreparer(ctx, applicationObjectID)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Delete", nil, "Failure preparing request")
@@ -209,6 +237,7 @@ func (client ApplicationsClient) Delete(ctx context.Context, applicationObjectID
 	result, err = client.DeleteResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Delete", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -237,8 +266,7 @@ func (client ApplicationsClient) DeletePreparer(ctx context.Context, application
 // DeleteSender sends the Delete request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) DeleteSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // DeleteResponder handles the response to the Delete request. The method always
@@ -246,7 +274,6 @@ func (client ApplicationsClient) DeleteSender(req *http.Request) (*http.Response
 func (client ApplicationsClient) DeleteResponder(resp *http.Response) (result autorest.Response, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusNoContent),
 		autorest.ByClosing())
 	result.Response = resp
@@ -257,6 +284,16 @@ func (client ApplicationsClient) DeleteResponder(resp *http.Response) (result au
 // Parameters:
 // applicationObjectID - application object ID.
 func (client ApplicationsClient) Get(ctx context.Context, applicationObjectID string) (result Application, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.Get")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.GetPreparer(ctx, applicationObjectID)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Get", nil, "Failure preparing request")
@@ -273,6 +310,7 @@ func (client ApplicationsClient) Get(ctx context.Context, applicationObjectID st
 	result, err = client.GetResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Get", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -301,8 +339,7 @@ func (client ApplicationsClient) GetPreparer(ctx context.Context, applicationObj
 // GetSender sends the Get request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) GetSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // GetResponder handles the response to the Get request. The method always
@@ -310,7 +347,80 @@ func (client ApplicationsClient) GetSender(req *http.Request) (*http.Response, e
 func (client ApplicationsClient) GetResponder(resp *http.Response) (result Application, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
+		azure.WithErrorUnlessStatusCode(http.StatusOK),
+		autorest.ByUnmarshallingJSON(&result),
+		autorest.ByClosing())
+	result.Response = autorest.Response{Response: resp}
+	return
+}
+
+// GetServicePrincipalsIDByAppID gets an object id for a given application id from the current tenant.
+// Parameters:
+// applicationID - the application ID.
+func (client ApplicationsClient) GetServicePrincipalsIDByAppID(ctx context.Context, applicationID string) (result ServicePrincipalObjectResult, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.GetServicePrincipalsIDByAppID")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
+	req, err := client.GetServicePrincipalsIDByAppIDPreparer(ctx, applicationID)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "GetServicePrincipalsIDByAppID", nil, "Failure preparing request")
+		return
+	}
+
+	resp, err := client.GetServicePrincipalsIDByAppIDSender(req)
+	if err != nil {
+		result.Response = autorest.Response{Response: resp}
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "GetServicePrincipalsIDByAppID", resp, "Failure sending request")
+		return
+	}
+
+	result, err = client.GetServicePrincipalsIDByAppIDResponder(resp)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "GetServicePrincipalsIDByAppID", resp, "Failure responding to request")
+		return
+	}
+
+	return
+}
+
+// GetServicePrincipalsIDByAppIDPreparer prepares the GetServicePrincipalsIDByAppID request.
+func (client ApplicationsClient) GetServicePrincipalsIDByAppIDPreparer(ctx context.Context, applicationID string) (*http.Request, error) {
+	pathParameters := map[string]interface{}{
+		"applicationID": autorest.Encode("path", applicationID),
+		"tenantID":      autorest.Encode("path", client.TenantID),
+	}
+
+	const APIVersion = "1.6"
+	queryParameters := map[string]interface{}{
+		"api-version": APIVersion,
+	}
+
+	preparer := autorest.CreatePreparer(
+		autorest.AsGet(),
+		autorest.WithBaseURL(client.BaseURI),
+		autorest.WithPathParameters("/{tenantID}/servicePrincipalsByAppId/{applicationID}/objectId", pathParameters),
+		autorest.WithQueryParameters(queryParameters))
+	return preparer.Prepare((&http.Request{}).WithContext(ctx))
+}
+
+// GetServicePrincipalsIDByAppIDSender sends the GetServicePrincipalsIDByAppID request. The method will close the
+// http.Response Body if it receives an error.
+func (client ApplicationsClient) GetServicePrincipalsIDByAppIDSender(req *http.Request) (*http.Response, error) {
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+}
+
+// GetServicePrincipalsIDByAppIDResponder handles the response to the GetServicePrincipalsIDByAppID request. The method always
+// closes the http.Response Body.
+func (client ApplicationsClient) GetServicePrincipalsIDByAppIDResponder(resp *http.Response) (result ServicePrincipalObjectResult, err error) {
+	err = autorest.Respond(
+		resp,
 		azure.WithErrorUnlessStatusCode(http.StatusOK),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -322,7 +432,17 @@ func (client ApplicationsClient) GetResponder(resp *http.Response) (result Appli
 // Parameters:
 // filter - the filters to apply to the operation.
 func (client ApplicationsClient) List(ctx context.Context, filter string) (result ApplicationListResultPage, err error) {
-	result.fn = func(lastResult ApplicationListResult) (ApplicationListResult, error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.List")
+		defer func() {
+			sc := -1
+			if result.alr.Response.Response != nil {
+				sc = result.alr.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
+	result.fn = func(ctx context.Context, lastResult ApplicationListResult) (ApplicationListResult, error) {
 		if lastResult.OdataNextLink == nil || len(to.String(lastResult.OdataNextLink)) < 1 {
 			return ApplicationListResult{}, nil
 		}
@@ -344,6 +464,11 @@ func (client ApplicationsClient) List(ctx context.Context, filter string) (resul
 	result.alr, err = client.ListResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "List", resp, "Failure responding to request")
+		return
+	}
+	if result.alr.hasNextLink() && result.alr.IsEmpty() {
+		err = result.NextWithContext(ctx)
+		return
 	}
 
 	return
@@ -374,8 +499,7 @@ func (client ApplicationsClient) ListPreparer(ctx context.Context, filter string
 // ListSender sends the List request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) ListSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // ListResponder handles the response to the List request. The method always
@@ -383,7 +507,6 @@ func (client ApplicationsClient) ListSender(req *http.Request) (*http.Response, 
 func (client ApplicationsClient) ListResponder(resp *http.Response) (result ApplicationListResult, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -393,6 +516,16 @@ func (client ApplicationsClient) ListResponder(resp *http.Response) (result Appl
 
 // ListComplete enumerates all values, automatically crossing page boundaries as required.
 func (client ApplicationsClient) ListComplete(ctx context.Context, filter string) (result ApplicationListResultIterator, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.List")
+		defer func() {
+			sc := -1
+			if result.Response().Response.Response != nil {
+				sc = result.page.Response().Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	result.page, err = client.List(ctx, filter)
 	return
 }
@@ -401,6 +534,16 @@ func (client ApplicationsClient) ListComplete(ctx context.Context, filter string
 // Parameters:
 // applicationObjectID - application object ID.
 func (client ApplicationsClient) ListKeyCredentials(ctx context.Context, applicationObjectID string) (result KeyCredentialListResult, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.ListKeyCredentials")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.ListKeyCredentialsPreparer(ctx, applicationObjectID)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListKeyCredentials", nil, "Failure preparing request")
@@ -417,6 +560,7 @@ func (client ApplicationsClient) ListKeyCredentials(ctx context.Context, applica
 	result, err = client.ListKeyCredentialsResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListKeyCredentials", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -445,8 +589,7 @@ func (client ApplicationsClient) ListKeyCredentialsPreparer(ctx context.Context,
 // ListKeyCredentialsSender sends the ListKeyCredentials request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) ListKeyCredentialsSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // ListKeyCredentialsResponder handles the response to the ListKeyCredentials request. The method always
@@ -454,7 +597,6 @@ func (client ApplicationsClient) ListKeyCredentialsSender(req *http.Request) (*h
 func (client ApplicationsClient) ListKeyCredentialsResponder(resp *http.Response) (result KeyCredentialListResult, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -466,6 +608,16 @@ func (client ApplicationsClient) ListKeyCredentialsResponder(resp *http.Response
 // Parameters:
 // nextLink - next link for the list operation.
 func (client ApplicationsClient) ListNext(ctx context.Context, nextLink string) (result ApplicationListResult, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.ListNext")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.ListNextPreparer(ctx, nextLink)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListNext", nil, "Failure preparing request")
@@ -482,6 +634,7 @@ func (client ApplicationsClient) ListNext(ctx context.Context, nextLink string) 
 	result, err = client.ListNextResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListNext", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -510,8 +663,7 @@ func (client ApplicationsClient) ListNextPreparer(ctx context.Context, nextLink 
 // ListNextSender sends the ListNext request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) ListNextSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // ListNextResponder handles the response to the ListNext request. The method always
@@ -519,7 +671,6 @@ func (client ApplicationsClient) ListNextSender(req *http.Request) (*http.Respon
 func (client ApplicationsClient) ListNextResponder(resp *http.Response) (result ApplicationListResult, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -530,7 +681,18 @@ func (client ApplicationsClient) ListNextResponder(resp *http.Response) (result 
 // ListOwners the owners are a set of non-admin users who are allowed to modify this object.
 // Parameters:
 // applicationObjectID - the object ID of the application for which to get owners.
-func (client ApplicationsClient) ListOwners(ctx context.Context, applicationObjectID string) (result DirectoryObjectListResult, err error) {
+func (client ApplicationsClient) ListOwners(ctx context.Context, applicationObjectID string) (result DirectoryObjectListResultPage, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.ListOwners")
+		defer func() {
+			sc := -1
+			if result.dolr.Response.Response != nil {
+				sc = result.dolr.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
+	result.fn = client.listOwnersNextResults
 	req, err := client.ListOwnersPreparer(ctx, applicationObjectID)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListOwners", nil, "Failure preparing request")
@@ -539,14 +701,19 @@ func (client ApplicationsClient) ListOwners(ctx context.Context, applicationObje
 
 	resp, err := client.ListOwnersSender(req)
 	if err != nil {
-		result.Response = autorest.Response{Response: resp}
+		result.dolr.Response = autorest.Response{Response: resp}
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListOwners", resp, "Failure sending request")
 		return
 	}
 
-	result, err = client.ListOwnersResponder(resp)
+	result.dolr, err = client.ListOwnersResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListOwners", resp, "Failure responding to request")
+		return
+	}
+	if result.dolr.hasNextLink() && result.dolr.IsEmpty() {
+		err = result.NextWithContext(ctx)
+		return
 	}
 
 	return
@@ -575,8 +742,7 @@ func (client ApplicationsClient) ListOwnersPreparer(ctx context.Context, applica
 // ListOwnersSender sends the ListOwners request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) ListOwnersSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // ListOwnersResponder handles the response to the ListOwners request. The method always
@@ -584,7 +750,6 @@ func (client ApplicationsClient) ListOwnersSender(req *http.Request) (*http.Resp
 func (client ApplicationsClient) ListOwnersResponder(resp *http.Response) (result DirectoryObjectListResult, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -592,10 +757,57 @@ func (client ApplicationsClient) ListOwnersResponder(resp *http.Response) (resul
 	return
 }
 
+// listOwnersNextResults retrieves the next set of results, if any.
+func (client ApplicationsClient) listOwnersNextResults(ctx context.Context, lastResults DirectoryObjectListResult) (result DirectoryObjectListResult, err error) {
+	req, err := lastResults.directoryObjectListResultPreparer(ctx)
+	if err != nil {
+		return result, autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "listOwnersNextResults", nil, "Failure preparing next results request")
+	}
+	if req == nil {
+		return
+	}
+	resp, err := client.ListOwnersSender(req)
+	if err != nil {
+		result.Response = autorest.Response{Response: resp}
+		return result, autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "listOwnersNextResults", resp, "Failure sending next results request")
+	}
+	result, err = client.ListOwnersResponder(resp)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "listOwnersNextResults", resp, "Failure responding to next results request")
+	}
+	return
+}
+
+// ListOwnersComplete enumerates all values, automatically crossing page boundaries as required.
+func (client ApplicationsClient) ListOwnersComplete(ctx context.Context, applicationObjectID string) (result DirectoryObjectListResultIterator, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.ListOwners")
+		defer func() {
+			sc := -1
+			if result.Response().Response.Response != nil {
+				sc = result.page.Response().Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
+	result.page, err = client.ListOwners(ctx, applicationObjectID)
+	return
+}
+
 // ListPasswordCredentials get the passwordCredentials associated with an application.
 // Parameters:
 // applicationObjectID - application object ID.
 func (client ApplicationsClient) ListPasswordCredentials(ctx context.Context, applicationObjectID string) (result PasswordCredentialListResult, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.ListPasswordCredentials")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.ListPasswordCredentialsPreparer(ctx, applicationObjectID)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListPasswordCredentials", nil, "Failure preparing request")
@@ -612,6 +824,7 @@ func (client ApplicationsClient) ListPasswordCredentials(ctx context.Context, ap
 	result, err = client.ListPasswordCredentialsResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "ListPasswordCredentials", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -640,8 +853,7 @@ func (client ApplicationsClient) ListPasswordCredentialsPreparer(ctx context.Con
 // ListPasswordCredentialsSender sends the ListPasswordCredentials request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) ListPasswordCredentialsSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // ListPasswordCredentialsResponder handles the response to the ListPasswordCredentials request. The method always
@@ -649,7 +861,6 @@ func (client ApplicationsClient) ListPasswordCredentialsSender(req *http.Request
 func (client ApplicationsClient) ListPasswordCredentialsResponder(resp *http.Response) (result PasswordCredentialListResult, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK),
 		autorest.ByUnmarshallingJSON(&result),
 		autorest.ByClosing())
@@ -662,6 +873,16 @@ func (client ApplicationsClient) ListPasswordCredentialsResponder(resp *http.Res
 // applicationObjectID - application object ID.
 // parameters - parameters to update an existing application.
 func (client ApplicationsClient) Patch(ctx context.Context, applicationObjectID string, parameters ApplicationUpdateParameters) (result autorest.Response, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.Patch")
+		defer func() {
+			sc := -1
+			if result.Response != nil {
+				sc = result.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.PatchPreparer(ctx, applicationObjectID, parameters)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Patch", nil, "Failure preparing request")
@@ -678,6 +899,7 @@ func (client ApplicationsClient) Patch(ctx context.Context, applicationObjectID 
 	result, err = client.PatchResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "Patch", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -708,8 +930,7 @@ func (client ApplicationsClient) PatchPreparer(ctx context.Context, applicationO
 // PatchSender sends the Patch request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) PatchSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // PatchResponder handles the response to the Patch request. The method always
@@ -717,7 +938,81 @@ func (client ApplicationsClient) PatchSender(req *http.Request) (*http.Response,
 func (client ApplicationsClient) PatchResponder(resp *http.Response) (result autorest.Response, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
+		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusNoContent),
+		autorest.ByClosing())
+	result.Response = resp
+	return
+}
+
+// RemoveOwner remove a member from owners.
+// Parameters:
+// applicationObjectID - the object ID of the application from which to remove the owner.
+// ownerObjectID - owner object id
+func (client ApplicationsClient) RemoveOwner(ctx context.Context, applicationObjectID string, ownerObjectID string) (result autorest.Response, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.RemoveOwner")
+		defer func() {
+			sc := -1
+			if result.Response != nil {
+				sc = result.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
+	req, err := client.RemoveOwnerPreparer(ctx, applicationObjectID, ownerObjectID)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "RemoveOwner", nil, "Failure preparing request")
+		return
+	}
+
+	resp, err := client.RemoveOwnerSender(req)
+	if err != nil {
+		result.Response = resp
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "RemoveOwner", resp, "Failure sending request")
+		return
+	}
+
+	result, err = client.RemoveOwnerResponder(resp)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "RemoveOwner", resp, "Failure responding to request")
+		return
+	}
+
+	return
+}
+
+// RemoveOwnerPreparer prepares the RemoveOwner request.
+func (client ApplicationsClient) RemoveOwnerPreparer(ctx context.Context, applicationObjectID string, ownerObjectID string) (*http.Request, error) {
+	pathParameters := map[string]interface{}{
+		"applicationObjectId": autorest.Encode("path", applicationObjectID),
+		"ownerObjectId":       autorest.Encode("path", ownerObjectID),
+		"tenantID":            autorest.Encode("path", client.TenantID),
+	}
+
+	const APIVersion = "1.6"
+	queryParameters := map[string]interface{}{
+		"api-version": APIVersion,
+	}
+
+	preparer := autorest.CreatePreparer(
+		autorest.AsDelete(),
+		autorest.WithBaseURL(client.BaseURI),
+		autorest.WithPathParameters("/{tenantID}/applications/{applicationObjectId}/$links/owners/{ownerObjectId}", pathParameters),
+		autorest.WithQueryParameters(queryParameters))
+	return preparer.Prepare((&http.Request{}).WithContext(ctx))
+}
+
+// RemoveOwnerSender sends the RemoveOwner request. The method will close the
+// http.Response Body if it receives an error.
+func (client ApplicationsClient) RemoveOwnerSender(req *http.Request) (*http.Response, error) {
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+}
+
+// RemoveOwnerResponder handles the response to the RemoveOwner request. The method always
+// closes the http.Response Body.
+func (client ApplicationsClient) RemoveOwnerResponder(resp *http.Response) (result autorest.Response, err error) {
+	err = autorest.Respond(
+		resp,
 		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusNoContent),
 		autorest.ByClosing())
 	result.Response = resp
@@ -729,6 +1024,16 @@ func (client ApplicationsClient) PatchResponder(resp *http.Response) (result aut
 // applicationObjectID - application object ID.
 // parameters - parameters to update the keyCredentials of an existing application.
 func (client ApplicationsClient) UpdateKeyCredentials(ctx context.Context, applicationObjectID string, parameters KeyCredentialsUpdateParameters) (result autorest.Response, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.UpdateKeyCredentials")
+		defer func() {
+			sc := -1
+			if result.Response != nil {
+				sc = result.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.UpdateKeyCredentialsPreparer(ctx, applicationObjectID, parameters)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "UpdateKeyCredentials", nil, "Failure preparing request")
@@ -745,6 +1050,7 @@ func (client ApplicationsClient) UpdateKeyCredentials(ctx context.Context, appli
 	result, err = client.UpdateKeyCredentialsResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "UpdateKeyCredentials", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -775,8 +1081,7 @@ func (client ApplicationsClient) UpdateKeyCredentialsPreparer(ctx context.Contex
 // UpdateKeyCredentialsSender sends the UpdateKeyCredentials request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) UpdateKeyCredentialsSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // UpdateKeyCredentialsResponder handles the response to the UpdateKeyCredentials request. The method always
@@ -784,7 +1089,6 @@ func (client ApplicationsClient) UpdateKeyCredentialsSender(req *http.Request) (
 func (client ApplicationsClient) UpdateKeyCredentialsResponder(resp *http.Response) (result autorest.Response, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusNoContent),
 		autorest.ByClosing())
 	result.Response = resp
@@ -796,6 +1100,16 @@ func (client ApplicationsClient) UpdateKeyCredentialsResponder(resp *http.Respon
 // applicationObjectID - application object ID.
 // parameters - parameters to update passwordCredentials of an existing application.
 func (client ApplicationsClient) UpdatePasswordCredentials(ctx context.Context, applicationObjectID string, parameters PasswordCredentialsUpdateParameters) (result autorest.Response, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/ApplicationsClient.UpdatePasswordCredentials")
+		defer func() {
+			sc := -1
+			if result.Response != nil {
+				sc = result.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.UpdatePasswordCredentialsPreparer(ctx, applicationObjectID, parameters)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "UpdatePasswordCredentials", nil, "Failure preparing request")
@@ -812,6 +1126,7 @@ func (client ApplicationsClient) UpdatePasswordCredentials(ctx context.Context, 
 	result, err = client.UpdatePasswordCredentialsResponder(resp)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "graphrbac.ApplicationsClient", "UpdatePasswordCredentials", resp, "Failure responding to request")
+		return
 	}
 
 	return
@@ -842,8 +1157,7 @@ func (client ApplicationsClient) UpdatePasswordCredentialsPreparer(ctx context.C
 // UpdatePasswordCredentialsSender sends the UpdatePasswordCredentials request. The method will close the
 // http.Response Body if it receives an error.
 func (client ApplicationsClient) UpdatePasswordCredentialsSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	return client.Send(req, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
 }
 
 // UpdatePasswordCredentialsResponder handles the response to the UpdatePasswordCredentials request. The method always
@@ -851,7 +1165,6 @@ func (client ApplicationsClient) UpdatePasswordCredentialsSender(req *http.Reque
 func (client ApplicationsClient) UpdatePasswordCredentialsResponder(resp *http.Response) (result autorest.Response, err error) {
 	err = autorest.Respond(
 		resp,
-		client.ByInspecting(),
 		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusNoContent),
 		autorest.ByClosing())
 	result.Response = resp

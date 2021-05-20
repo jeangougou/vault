@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/helper/strutil"
+
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 // Structure to hold roles that are allowed to accept any IP address.
@@ -17,7 +19,7 @@ func pathConfigZeroAddress(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: "config/zeroaddress",
 		Fields: map[string]*framework.FieldSchema{
-			"roles": &framework.FieldSchema{
+			"roles": {
 				Type: framework.TypeCommaStringSlice,
 				Description: `[Required] Comma separated list of role names which
 				allows credentials to be requested for any IP address. CIDR blocks
@@ -125,42 +127,9 @@ func (b *backend) removeZeroAddressRole(ctx context.Context, s logical.Storage, 
 		return nil
 	}
 
-	err = zeroAddressEntry.remove(roleName)
-	if err != nil {
-		return err
-	}
+	zeroAddressEntry.Roles = strutil.StrListDelete(zeroAddressEntry.Roles, roleName)
 
 	return b.putZeroAddressRoles(ctx, s, zeroAddressEntry.Roles)
-}
-
-// Removes a given role from the comma separated string
-func (r *zeroAddressRoles) remove(roleName string) error {
-	var index int
-	for i, role := range r.Roles {
-		if role == roleName {
-			index = i
-			break
-		}
-	}
-	length := len(r.Roles)
-	if index >= length || index < 0 {
-		return fmt.Errorf("invalid index %d", index)
-	}
-	// If slice has zero or one item, remove the item by setting slice to nil.
-	if length < 2 {
-		r.Roles = nil
-		return nil
-	}
-
-	// Last item to be deleted
-	if length-1 == index {
-		r.Roles = r.Roles[:length-1]
-		return nil
-	}
-
-	// Delete the item by appending all items except the one at index
-	r.Roles = append(r.Roles[:index], r.Roles[index+1:]...)
-	return nil
 }
 
 const pathConfigZeroAddressSyn = `

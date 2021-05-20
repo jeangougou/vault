@@ -11,8 +11,8 @@ export default Controller.extend({
         .seal()
         .then(() => {
           this.model.cluster.get('leaderNode').set('sealed', true);
-          this.get('auth').deleteCurrentToken();
-          return this.transitionToRoute('vault.cluster');
+          this.auth.deleteCurrentToken();
+          return this.transitionToRoute('vault.cluster.unseal');
         });
     },
   },

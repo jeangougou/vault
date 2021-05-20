@@ -7,10 +7,9 @@ import (
 
 	"github.com/hashicorp/vault/helper/namespace"
 
-	"github.com/hashicorp/errwrap"
 	multierror "github.com/hashicorp/go-multierror"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/helper/strutil"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 // reloadPluginMounts reloads provided mounts, regardless of
@@ -47,7 +46,7 @@ func (c *Core) reloadMatchingPluginMounts(ctx context.Context, mounts []string) 
 
 		err := c.reloadBackendCommon(ctx, entry, isAuth)
 		if err != nil {
-			errors = multierror.Append(errors, errwrap.Wrapf(fmt.Sprintf("cannot reload plugin on %q: {{err}}", mount), err))
+			errors = multierror.Append(errors, fmt.Errorf("cannot reload plugin on %q: %w", mount, err))
 			continue
 		}
 		c.logger.Info("successfully reloaded plugin", "plugin", entry.Accessor, "path", entry.Path)
@@ -106,6 +105,10 @@ func (c *Core) reloadMatchingPlugin(ctx context.Context, pluginName string) erro
 // reloadBackendCommon is a generic method to reload a backend provided a
 // MountEntry.
 func (c *Core) reloadBackendCommon(ctx context.Context, entry *MountEntry, isAuth bool) error {
+	// Make sure our cache is up-to-date. Since some singleton mounts can be
+	// tuned, we do this before the below check.
+	entry.SyncCache()
+
 	// We don't want to reload the singleton mounts. They often have specific
 	// inmemory elements and we don't want to touch them here.
 	if strutil.StrListContains(singletonMounts, entry.Type) {
@@ -190,4 +193,8 @@ func (c *Core) reloadBackendCommon(ctx context.Context, entry *MountEntry, isAut
 	}
 
 	return nil
+}
+
+func (c *Core) setupPluginReload() error {
+	return handleSetupPluginReload(c)
 }

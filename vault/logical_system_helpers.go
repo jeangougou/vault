@@ -9,8 +9,8 @@ import (
 
 	memdb "github.com/hashicorp/go-memdb"
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 var (
@@ -55,18 +55,6 @@ var (
 		}
 	}
 
-	pathLicenseRead = func(b *SystemBackend) framework.OperationFunc {
-		return func(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-			return nil, nil
-		}
-	}
-
-	pathLicenseUpdate = func(b *SystemBackend) framework.OperationFunc {
-		return func(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-			return nil, nil
-		}
-	}
-
 	entPaths = func(b *SystemBackend) []*framework.Path {
 		return []*framework.Path{
 			{
@@ -84,6 +72,14 @@ var (
 			},
 		}
 	}
+	handleGlobalPluginReload = func(context.Context, *Core, string, string, []string) error {
+		return nil
+	}
+	handleSetupPluginReload = func(*Core) error {
+		return nil
+	}
+
+	checkRaw = func(b *SystemBackend, path string) error { return nil }
 )
 
 // tuneMount is used to set config on a mount point

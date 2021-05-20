@@ -8,8 +8,10 @@ import (
 	"github.com/posener/complete"
 )
 
-var _ cli.Command = (*ListCommand)(nil)
-var _ cli.CommandAutocomplete = (*ListCommand)(nil)
+var (
+	_ cli.Command             = (*ListCommand)(nil)
+	_ cli.CommandAutocomplete = (*ListCommand)(nil)
+)
 
 type ListCommand struct {
 	*BaseCommand
@@ -75,13 +77,27 @@ func (c *ListCommand) Run(args []string) int {
 		return 2
 	}
 
-	path := ensureTrailingSlash(sanitizePath(args[0]))
+	// Append trailing slash
+	path := args[0]
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
 
+	path = sanitizePath(path)
 	secret, err := client.Logical().List(path)
 	if err != nil {
 		c.UI.Error(fmt.Sprintf("Error listing %s: %s", path, err))
 		return 2
 	}
+
+	_, ok := extractListData(secret)
+	if Format(c.UI) != "table" {
+		if secret == nil || secret.Data == nil || !ok {
+			OutputData(c.UI, map[string]interface{}{})
+			return 2
+		}
+	}
+
 	if secret == nil {
 		c.UI.Error(fmt.Sprintf("No value found at %s", path))
 		return 2
@@ -97,7 +113,7 @@ func (c *ListCommand) Run(args []string) int {
 		return OutputSecret(c.UI, secret)
 	}
 
-	if _, ok := extractListData(secret); !ok {
+	if !ok {
 		c.UI.Error(fmt.Sprintf("No entries found at %s", path))
 		return 2
 	}

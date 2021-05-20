@@ -1,5 +1,6 @@
 import ApplicationAdapter from './application';
 import { pluralize } from 'ember-inflector';
+import { encodePath } from 'vault/utils/path-encoding-helpers';
 
 export default ApplicationAdapter.extend({
   namespace: 'v1',
@@ -7,14 +8,17 @@ export default ApplicationAdapter.extend({
   createOrUpdate(store, type, snapshot, requestType) {
     const serializer = store.serializerFor(type.modelName);
     const data = serializer.serialize(snapshot, requestType);
-    const { id } = snapshot;
-    let url = this.urlForSecret(snapshot.record.get('backend'), id);
-
+    let name = snapshot.attr('name');
+    let url = this.urlForSecret(snapshot.record.get('backend'), name);
     if (requestType === 'update') {
       url = url + '/config';
     }
 
-    return this.ajax(url, 'POST', { data });
+    return this.ajax(url, 'POST', { data }).then(resp => {
+      let response = resp || {};
+      response.id = name;
+      return response;
+    });
   },
 
   createRecord() {
@@ -47,29 +51,29 @@ export default ApplicationAdapter.extend({
   },
 
   urlForSecret(backend, id) {
-    let url = `${this.buildURL()}/${backend}/keys/`;
+    let url = `${this.buildURL()}/${encodePath(backend)}/keys/`;
     if (id) {
-      url += id;
+      url += encodePath(id);
     }
     return url;
   },
 
   urlForAction(action, backend, id, param) {
-    let urlBase = `${this.buildURL()}/${backend}/${action}`;
+    let urlBase = `${this.buildURL()}/${encodePath(backend)}/${action}`;
     // these aren't key-specific
     if (action === 'hash' || action === 'random') {
       return urlBase;
     }
     if (action === 'datakey' && param) {
       // datakey action has `wrapped` or `plaintext` as part of the url
-      return `${urlBase}/${param}/${id}`;
+      return `${urlBase}/${param}/${encodePath(id)}`;
     }
     if (action === 'export' && param) {
       let [type, version] = param;
-      const exportBase = `${urlBase}/${type}-key/${id}`;
+      const exportBase = `${urlBase}/${type}-key/${encodePath(id)}`;
       return version ? `${exportBase}/${version}` : exportBase;
     }
-    return `${urlBase}/${id}`;
+    return `${urlBase}/${encodePath(id)}`;
   },
 
   optionsForQuery(id) {
@@ -84,6 +88,7 @@ export default ApplicationAdapter.extend({
     const { id, backend } = query;
     return this.ajax(this.urlForSecret(backend, id), 'GET', this.optionsForQuery(id)).then(resp => {
       resp.id = id;
+      resp.backend = backend;
       return resp;
     });
   },

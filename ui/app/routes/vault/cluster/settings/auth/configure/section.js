@@ -1,14 +1,16 @@
+import AdapterError from '@ember-data/adapter/error';
 import { inject as service } from '@ember/service';
 import { set } from '@ember/object';
 import Route from '@ember/routing/route';
 import RSVP from 'rsvp';
-import DS from 'ember-data';
 import UnloadModelRoute from 'vault/mixins/unload-model-route';
 
 export default Route.extend(UnloadModelRoute, {
   modelPath: 'model.model',
-  wizard: service(),
+  pathHelp: service('path-help'),
+
   modelType(backendType, section) {
+    // TODO: Update endpoints from PR#10997
     const MODELS = {
       'aws-client': 'auth-config/aws/client',
       'aws-identity-whitelist': 'auth-config/aws/identity-whitelist',
@@ -17,6 +19,7 @@ export default Route.extend(UnloadModelRoute, {
       'github-configuration': 'auth-config/github',
       'gcp-configuration': 'auth-config/gcp',
       'jwt-configuration': 'auth-config/jwt',
+      'oidc-configuration': 'auth-config/oidc',
       'kubernetes-configuration': 'auth-config/kubernetes',
       'ldap-configuration': 'auth-config/ldap',
       'okta-configuration': 'auth-config/okta',
@@ -25,15 +28,21 @@ export default Route.extend(UnloadModelRoute, {
     return MODELS[`${backendType}-${section}`];
   },
 
+  beforeModel() {
+    const { section_name } = this.paramsFor(this.routeName);
+    if (section_name === 'options') {
+      return;
+    }
+    const { method } = this.paramsFor('vault.cluster.settings.auth.configure');
+    const backend = this.modelFor('vault.cluster.settings.auth.configure');
+    const modelType = this.modelType(backend.type, section_name);
+    return this.pathHelp.getNewModel(modelType, method, backend.apiPath);
+  },
+
   model(params) {
     const backend = this.modelFor('vault.cluster.settings.auth.configure');
     const { section_name: section } = params;
     if (section === 'options') {
-      this.get('wizard').transitionFeatureMachine(
-        this.get('wizard.featureState'),
-        'EDIT',
-        backend.get('type')
-      );
       return RSVP.hash({
         model: backend,
         section,
@@ -41,17 +50,12 @@ export default Route.extend(UnloadModelRoute, {
     }
     const modelType = this.modelType(backend.get('type'), section);
     if (!modelType) {
-      const error = new DS.AdapterError();
+      const error = new AdapterError();
       set(error, 'httpStatus', 404);
       throw error;
     }
     const model = this.store.peekRecord(modelType, backend.id);
     if (model) {
-      this.get('wizard').transitionFeatureMachine(
-        this.get('wizard.featureState'),
-        'EDIT',
-        backend.get('type')
-      );
       return RSVP.hash({
         model,
         section,
@@ -60,11 +64,6 @@ export default Route.extend(UnloadModelRoute, {
     return this.store
       .findRecord(modelType, backend.id)
       .then(config => {
-        this.get('wizard').transitionFeatureMachine(
-          this.get('wizard.featureState'),
-          'EDIT',
-          backend.get('type')
-        );
         config.set('backend', backend);
         return RSVP.hash({
           model: config,

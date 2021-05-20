@@ -5,11 +5,10 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/vault/helper/certutil"
-	"github.com/hashicorp/vault/helper/errutil"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/certutil"
+	"github.com/hashicorp/vault/sdk/helper/errutil"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func pathGenerateIntermediate(b *backend) *framework.Path {
@@ -42,7 +41,7 @@ func pathSetSignedIntermediate(b *backend) *framework.Path {
 		Pattern: "intermediate/set-signed",
 
 		Fields: map[string]*framework.FieldSchema{
-			"certificate": &framework.FieldSchema{
+			"certificate": {
 				Type: framework.TypeString,
 				Description: `PEM-format certificate. This must be a CA
 certificate with a public key matching the
@@ -71,7 +70,7 @@ func (b *backend) pathGenerateIntermediate(ctx context.Context, req *logical.Req
 	}
 
 	var resp *logical.Response
-	input := &dataBundle{
+	input := &inputBundle{
 		role:    role,
 		req:     req,
 		apiData: data,
@@ -81,14 +80,14 @@ func (b *backend) pathGenerateIntermediate(ctx context.Context, req *logical.Req
 		switch err.(type) {
 		case errutil.UserError:
 			return logical.ErrorResponse(err.Error()), nil
-		case errutil.InternalError:
+		default:
 			return nil, err
 		}
 	}
 
 	csrb, err := parsedBundle.ToCSRBundle()
 	if err != nil {
-		return nil, errwrap.Wrapf("error converting raw CSR bundle to CSR bundle: {{err}}", err)
+		return nil, fmt.Errorf("error converting raw CSR bundle to CSR bundle: %w", err)
 	}
 
 	resp = &logical.Response{
@@ -198,12 +197,12 @@ func (b *backend) pathSetSignedIntermediate(ctx context.Context, req *logical.Re
 	}
 
 	if err := inputBundle.Verify(); err != nil {
-		return nil, errwrap.Wrapf("verification of parsed bundle failed: {{err}}", err)
+		return nil, fmt.Errorf("verification of parsed bundle failed: %w", err)
 	}
 
 	cb, err = inputBundle.ToCertBundle()
 	if err != nil {
-		return nil, errwrap.Wrapf("error converting raw values into cert bundle: {{err}}", err)
+		return nil, fmt.Errorf("error converting raw values into cert bundle: %w", err)
 	}
 
 	entry, err = logical.StorageEntryJSON("config/ca_bundle", cb)

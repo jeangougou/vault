@@ -8,8 +8,10 @@ import (
 	"github.com/posener/complete"
 )
 
-var _ cli.Command = (*KVListCommand)(nil)
-var _ cli.CommandAutocomplete = (*KVListCommand)(nil)
+var (
+	_ cli.Command             = (*KVListCommand)(nil)
+	_ cli.CommandAutocomplete = (*KVListCommand)(nil)
+)
 
 type KVListCommand struct {
 	*BaseCommand
@@ -73,7 +75,14 @@ func (c *KVListCommand) Run(args []string) int {
 		return 2
 	}
 
-	path := ensureTrailingSlash(sanitizePath(args[0]))
+	// Append trailing slash
+	path := args[0]
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+
+	// Sanitize path
+	path = sanitizePath(path)
 	mountPath, v2, err := isKVv2(path, client)
 	if err != nil {
 		c.UI.Error(err.Error())
@@ -93,6 +102,15 @@ func (c *KVListCommand) Run(args []string) int {
 		c.UI.Error(fmt.Sprintf("Error listing %s: %s", path, err))
 		return 2
 	}
+
+	_, ok := extractListData(secret)
+	if Format(c.UI) != "table" {
+		if secret == nil || secret.Data == nil || !ok {
+			OutputData(c.UI, map[string]interface{}{})
+			return 2
+		}
+	}
+
 	if secret == nil || secret.Data == nil {
 		c.UI.Error(fmt.Sprintf("No value found at %s", path))
 		return 2
@@ -103,7 +121,7 @@ func (c *KVListCommand) Run(args []string) int {
 		return OutputSecret(c.UI, secret)
 	}
 
-	if _, ok := extractListData(secret); !ok {
+	if !ok {
 		c.UI.Error(fmt.Sprintf("No entries found at %s", path))
 		return 2
 	}

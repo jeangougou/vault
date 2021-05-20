@@ -9,14 +9,13 @@ import (
 	"time"
 
 	metrics "github.com/armon/go-metrics"
-	"github.com/hashicorp/errwrap"
 	log "github.com/hashicorp/go-hclog"
 	lru "github.com/hashicorp/golang-lru"
-	"github.com/hashicorp/vault/helper/consts"
 	"github.com/hashicorp/vault/helper/identity"
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/strutil"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 const (
@@ -145,12 +144,6 @@ path "sys/tools/hash" {
 path "sys/tools/hash/*" {
     capabilities = ["update"]
 }
-path "sys/tools/random" {
-    capabilities = ["update"]
-}
-path "sys/tools/random/*" {
-    capabilities = ["update"]
-}
 
 # Allow checking the status of a Control Group request if the user has the
 # accessor
@@ -261,7 +254,7 @@ func (c *Core) setupPolicyStore(ctx context.Context) error {
 		return err
 	}
 
-	if c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary) {
+	if c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary | consts.ReplicationDRSecondary) {
 		// Policies will sync from the primary
 		return nil
 	}
@@ -332,7 +325,7 @@ func (ps *PolicyStore) invalidate(ctx context.Context, name string, policyType P
 	// case another process has re-written the policy; instead next time Get is
 	// called the values will be loaded back in.
 	if out == nil {
-		ps.switchedDeletePolicy(ctx, name, policyType, false)
+		ps.switchedDeletePolicy(ctx, name, policyType, false, true)
 	}
 
 	return
@@ -379,7 +372,7 @@ func (ps *PolicyStore) setPolicyInternal(ctx context.Context, p *Policy) error {
 		sentinelPolicy: p.sentinelPolicy,
 	})
 	if err != nil {
-		return errwrap.Wrapf("failed to create entry: {{err}}", err)
+		return fmt.Errorf("failed to create entry: %w", err)
 	}
 
 	// Construct the cache key
@@ -390,14 +383,14 @@ func (ps *PolicyStore) setPolicyInternal(ctx context.Context, p *Policy) error {
 		rgpView := ps.getRGPView(p.namespace)
 		rgp, err := rgpView.Get(ctx, entry.Key)
 		if err != nil {
-			return errwrap.Wrapf("failed looking up conflicting policy: {{err}}", err)
+			return fmt.Errorf("failed looking up conflicting policy: %w", err)
 		}
 		if rgp != nil {
 			return fmt.Errorf("cannot reuse policy names between ACLs and RGPs")
 		}
 
 		if err := view.Put(ctx, entry); err != nil {
-			return errwrap.Wrapf("failed to persist policy: {{err}}", err)
+			return fmt.Errorf("failed to persist policy: %w", err)
 		}
 
 		ps.policyTypeMap.Store(index, PolicyTypeACL)
@@ -410,7 +403,7 @@ func (ps *PolicyStore) setPolicyInternal(ctx context.Context, p *Policy) error {
 		aclView := ps.getACLView(p.namespace)
 		acl, err := aclView.Get(ctx, entry.Key)
 		if err != nil {
-			return errwrap.Wrapf("failed looking up conflicting policy: {{err}}", err)
+			return fmt.Errorf("failed looking up conflicting policy: %w", err)
 		}
 		if acl != nil {
 			return fmt.Errorf("cannot reuse policy names between ACLs and RGPs")
@@ -524,14 +517,14 @@ func (ps *PolicyStore) switchedGetPolicy(ctx context.Context, name string, polic
 		}
 	}
 
-	// Nil-check on the view before proceeding to retrive from storage
+	// Nil-check on the view before proceeding to retrieve from storage
 	if view == nil {
 		return nil, fmt.Errorf("unable to get the barrier subview for policy type %q", policyType)
 	}
 
 	out, err := view.Get(ctx, name)
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to read policy: {{err}}", err)
+		return nil, fmt.Errorf("failed to read policy: %w", err)
 	}
 
 	if out == nil {
@@ -542,7 +535,7 @@ func (ps *PolicyStore) switchedGetPolicy(ctx context.Context, name string, polic
 	policy := new(Policy)
 	err = out.DecodeJSON(policyEntry)
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to parse policy: {{err}}", err)
+		return nil, fmt.Errorf("failed to parse policy: %w", err)
 	}
 
 	// Set these up here so that they're available for loading into
@@ -558,7 +551,7 @@ func (ps *PolicyStore) switchedGetPolicy(ctx context.Context, name string, polic
 		// Parse normally
 		p, err := ParseACLPolicy(ns, policyEntry.Raw)
 		if err != nil {
-			return nil, errwrap.Wrapf("failed to parse policy: {{err}}", err)
+			return nil, fmt.Errorf("failed to parse policy: %w", err)
 		}
 		policy.Paths = p.Paths
 
@@ -645,10 +638,18 @@ func (ps *PolicyStore) ListPolicies(ctx context.Context, policyType PolicyType) 
 
 // DeletePolicy is used to delete the named policy
 func (ps *PolicyStore) DeletePolicy(ctx context.Context, name string, policyType PolicyType) error {
-	return ps.switchedDeletePolicy(ctx, name, policyType, true)
+	return ps.switchedDeletePolicy(ctx, name, policyType, true, false)
 }
 
-func (ps *PolicyStore) switchedDeletePolicy(ctx context.Context, name string, policyType PolicyType, physicalDeletion bool) error {
+// deletePolicyForce is used to delete the named policy and force it even if
+// default or a singleton. It's used for invalidations or namespace deletion
+// where we internally need to actually remove a policy that the user normally
+// isn't allowed to remove.
+func (ps *PolicyStore) deletePolicyForce(ctx context.Context, name string, policyType PolicyType) error {
+	return ps.switchedDeletePolicy(ctx, name, policyType, true, true)
+}
+
+func (ps *PolicyStore) switchedDeletePolicy(ctx context.Context, name string, policyType PolicyType, physicalDeletion, force bool) error {
 	defer metrics.MeasureSince([]string{"policy", "delete_policy"}, time.Now())
 
 	ns, err := namespace.FromContext(ctx)
@@ -673,17 +674,19 @@ func (ps *PolicyStore) switchedDeletePolicy(ctx context.Context, name string, po
 
 	switch policyType {
 	case PolicyTypeACL:
-		if strutil.StrListContains(immutablePolicies, name) {
-			return fmt.Errorf("cannot delete %q policy", name)
-		}
-		if name == "default" {
-			return fmt.Errorf("cannot delete default policy")
+		if !force {
+			if strutil.StrListContains(immutablePolicies, name) {
+				return fmt.Errorf("cannot delete %q policy", name)
+			}
+			if name == "default" {
+				return fmt.Errorf("cannot delete default policy")
+			}
 		}
 
 		if physicalDeletion {
 			err := view.Delete(ctx, name)
 			if err != nil {
-				return errwrap.Wrapf("failed to delete policy: {{err}}", err)
+				return fmt.Errorf("failed to delete policy: %w", err)
 			}
 		}
 
@@ -698,7 +701,7 @@ func (ps *PolicyStore) switchedDeletePolicy(ctx context.Context, name string, po
 		if physicalDeletion {
 			err := view.Delete(ctx, name)
 			if err != nil {
-				return errwrap.Wrapf("failed to delete policy: {{err}}", err)
+				return fmt.Errorf("failed to delete policy: %w", err)
 			}
 		}
 
@@ -715,7 +718,7 @@ func (ps *PolicyStore) switchedDeletePolicy(ctx context.Context, name string, po
 		if physicalDeletion {
 			err := view.Delete(ctx, name)
 			if err != nil {
-				return errwrap.Wrapf("failed to delete policy: {{err}}", err)
+				return fmt.Errorf("failed to delete policy: %w", err)
 			}
 		}
 
@@ -761,7 +764,7 @@ func (ps *PolicyStore) ACL(ctx context.Context, entity *identity.Entity, policyN
 		for _, nsPolicyName := range nsPolicyNames {
 			p, err := ps.GetPolicy(policyCtx, nsPolicyName, PolicyTypeToken)
 			if err != nil {
-				return nil, errwrap.Wrapf("failed to get policy: {{err}}", err)
+				return nil, fmt.Errorf("failed to get policy: %w", err)
 			}
 			if p != nil {
 				policies = append(policies, p)
@@ -778,14 +781,14 @@ func (ps *PolicyStore) ACL(ctx context.Context, entity *identity.Entity, policyN
 				if entity != nil {
 					directGroups, inheritedGroups, err := ps.core.identityStore.groupsByEntityID(entity.ID)
 					if err != nil {
-						return nil, errwrap.Wrapf("failed to fetch group memberships: {{err}}", err)
+						return nil, fmt.Errorf("failed to fetch group memberships: %w", err)
 					}
 					groups = append(directGroups, inheritedGroups...)
 				}
 			}
 			p, err := parseACLPolicyWithTemplating(policy.namespace, policy.Raw, true, entity, groups)
 			if err != nil {
-				return nil, errwrap.Wrapf(fmt.Sprintf("error parsing templated policy %q: {{err}}", policy.Name), err)
+				return nil, fmt.Errorf("error parsing templated policy %q: %w", policy.Name, err)
 			}
 			p.Name = policy.Name
 			policies[i] = p
@@ -795,7 +798,7 @@ func (ps *PolicyStore) ACL(ctx context.Context, entity *identity.Entity, policyN
 	// Construct the ACL
 	acl, err := NewACL(ctx, policies)
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to construct ACL: {{err}}", err)
+		return nil, fmt.Errorf("failed to construct ACL: %w", err)
 	}
 
 	return acl, nil
@@ -818,7 +821,7 @@ func (ps *PolicyStore) loadACLPolicyInternal(ctx context.Context, policyName, po
 	// Check if the policy already exists
 	policy, err := ps.GetPolicy(ctx, policyName, PolicyTypeACL)
 	if err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("error fetching %s policy from store: {{err}}", policyName), err)
+		return fmt.Errorf("error fetching %s policy from store: %w", policyName, err)
 	}
 	if policy != nil {
 		if !strutil.StrListContains(immutablePolicies, policyName) || policyText == policy.Raw {
@@ -828,7 +831,7 @@ func (ps *PolicyStore) loadACLPolicyInternal(ctx context.Context, policyName, po
 
 	policy, err = ParseACLPolicy(ns, policyText)
 	if err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("error parsing %s policy: {{err}}", policyName), err)
+		return fmt.Errorf("error parsing %s policy: %w", policyName, err)
 	}
 
 	if policy == nil {

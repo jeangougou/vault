@@ -12,8 +12,10 @@ import (
 	"github.com/posener/complete"
 )
 
-var _ cli.Command = (*SecretsTuneCommand)(nil)
-var _ cli.CommandAutocomplete = (*SecretsTuneCommand)(nil)
+var (
+	_ cli.Command             = (*SecretsTuneCommand)(nil)
+	_ cli.CommandAutocomplete = (*SecretsTuneCommand)(nil)
+)
 
 type SecretsTuneCommand struct {
 	*BaseCommand
@@ -57,14 +59,14 @@ func (c *SecretsTuneCommand) Flags() *FlagSets {
 	f.StringSliceVar(&StringSliceVar{
 		Name:   flagNameAuditNonHMACRequestKeys,
 		Target: &c.flagAuditNonHMACRequestKeys,
-		Usage: "Comma-separated string or list of keys that will not be HMAC'd by audit" +
+		Usage: "Comma-separated string or list of keys that will not be HMAC'd by audit " +
 			"devices in the request data object.",
 	})
 
 	f.StringSliceVar(&StringSliceVar{
 		Name:   flagNameAuditNonHMACResponseKeys,
 		Target: &c.flagAuditNonHMACResponseKeys,
-		Usage: "Comma-separated string or list of keys that will not be HMAC'd by audit" +
+		Usage: "Comma-separated string or list of keys that will not be HMAC'd by audit " +
 			"devices in the response data object.",
 	})
 
@@ -82,14 +84,14 @@ func (c *SecretsTuneCommand) Flags() *FlagSets {
 	f.StringVar(&StringVar{
 		Name:   flagNameDescription,
 		Target: &c.flagDescription,
-		Usage: "Human-friendly description of this secret engine. This overrides the" +
+		Usage: "Human-friendly description of this secret engine. This overrides the " +
 			"current stored value, if any.",
 	})
 
 	f.StringVar(&StringVar{
 		Name:   flagNameListingVisibility,
 		Target: &c.flagListingVisibility,
-		Usage: "Determines the visibility of the mount in the UI-specific listing" +
+		Usage: "Determines the visibility of the mount in the UI-specific listing " +
 			"endpoint.",
 	})
 

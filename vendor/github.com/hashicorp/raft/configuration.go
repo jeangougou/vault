@@ -32,6 +32,26 @@ func (s ServerSuffrage) String() string {
 	return "ServerSuffrage"
 }
 
+// ConfigurationStore provides an interface that can optionally be implemented by FSMs
+// to store configuration updates made in the replicated log. In general this is only
+// necessary for FSMs that mutate durable state directly instead of applying changes
+// in memory and snapshotting periodically. By storing configuration changes, the
+// persistent FSM state can behave as a complete snapshot, and be able to recover
+// without an external snapshot just for persisting the raft configuration.
+type ConfigurationStore interface {
+	// ConfigurationStore is a superset of the FSM functionality
+	FSM
+
+	// StoreConfiguration is invoked once a log entry containing a configuration
+	// change is committed. It takes the index at which the configuration was
+	// written and the configuration value.
+	StoreConfiguration(index uint64, configuration Configuration)
+}
+
+type nopConfigurationStore struct{}
+
+func (s nopConfigurationStore) StoreConfiguration(_ uint64, _ Configuration) {}
+
 // ServerID is a unique string identifying a server for all time.
 type ServerID string
 
@@ -161,17 +181,17 @@ func checkConfiguration(configuration Configuration) error {
 	var voters int
 	for _, server := range configuration.Servers {
 		if server.ID == "" {
-			return fmt.Errorf("Empty ID in configuration: %v", configuration)
+			return fmt.Errorf("empty ID in configuration: %v", configuration)
 		}
 		if server.Address == "" {
-			return fmt.Errorf("Empty address in configuration: %v", server)
+			return fmt.Errorf("empty address in configuration: %v", server)
 		}
 		if idSet[server.ID] {
-			return fmt.Errorf("Found duplicate ID in configuration: %v", server.ID)
+			return fmt.Errorf("found duplicate ID in configuration: %v", server.ID)
 		}
 		idSet[server.ID] = true
 		if addressSet[server.Address] {
-			return fmt.Errorf("Found duplicate address in configuration: %v", server.Address)
+			return fmt.Errorf("found duplicate address in configuration: %v", server.Address)
 		}
 		addressSet[server.Address] = true
 		if server.Suffrage == Voter {
@@ -179,7 +199,7 @@ func checkConfiguration(configuration Configuration) error {
 		}
 	}
 	if voters == 0 {
-		return fmt.Errorf("Need at least one voter in configuration: %v", configuration)
+		return fmt.Errorf("need at least one voter in configuration: %v", configuration)
 	}
 	return nil
 }
@@ -189,7 +209,7 @@ func checkConfiguration(configuration Configuration) error {
 // that it can be unit tested easily.
 func nextConfiguration(current Configuration, currentIndex uint64, change configurationChangeRequest) (Configuration, error) {
 	if change.prevIndex > 0 && change.prevIndex != currentIndex {
-		return Configuration{}, fmt.Errorf("Configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
+		return Configuration{}, fmt.Errorf("configuration changed since %v (latest is %v)", change.prevIndex, currentIndex)
 	}
 
 	configuration := current.Clone()
@@ -322,9 +342,9 @@ func decodePeers(buf []byte, trans Transport) Configuration {
 	}
 }
 
-// encodeConfiguration serializes a Configuration using MsgPack, or panics on
+// EncodeConfiguration serializes a Configuration using MsgPack, or panics on
 // errors.
-func encodeConfiguration(configuration Configuration) []byte {
+func EncodeConfiguration(configuration Configuration) []byte {
 	buf, err := encodeMsgPack(configuration)
 	if err != nil {
 		panic(fmt.Errorf("failed to encode configuration: %v", err))
@@ -332,9 +352,9 @@ func encodeConfiguration(configuration Configuration) []byte {
 	return buf.Bytes()
 }
 
-// decodeConfiguration deserializes a Configuration using MsgPack, or panics on
+// DecodeConfiguration deserializes a Configuration using MsgPack, or panics on
 // errors.
-func decodeConfiguration(buf []byte) Configuration {
+func DecodeConfiguration(buf []byte) Configuration {
 	var configuration Configuration
 	if err := decodeMsgPack(buf, &configuration); err != nil {
 		panic(fmt.Errorf("failed to decode configuration: %v", err))

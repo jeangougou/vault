@@ -116,7 +116,7 @@ func hostInfo(addr string, defaultPort int) ([]*HostInfo, error) {
 
 	// Check if host is a literal IP address
 	if ip := net.ParseIP(host); ip != nil {
-		hosts = append(hosts, &HostInfo{connectAddress: ip, port: port})
+		hosts = append(hosts, &HostInfo{hostname: host, connectAddress: ip, port: port})
 		return hosts, nil
 	}
 
@@ -125,7 +125,7 @@ func hostInfo(addr string, defaultPort int) ([]*HostInfo, error) {
 	if err != nil {
 		return nil, err
 	} else if len(ips) == 0 {
-		return nil, fmt.Errorf("No IP's returned from DNS lookup for %q", addr)
+		return nil, fmt.Errorf("no IP's returned from DNS lookup for %q", addr)
 	}
 
 	// Filter to v4 addresses if any present
@@ -142,21 +142,21 @@ func hostInfo(addr string, defaultPort int) ([]*HostInfo, error) {
 	}
 
 	for _, ip := range ips {
-		hosts = append(hosts, &HostInfo{connectAddress: ip, port: port})
+		hosts = append(hosts, &HostInfo{hostname: host, connectAddress: ip, port: port})
 	}
 
 	return hosts, nil
 }
 
 func shuffleHosts(hosts []*HostInfo) []*HostInfo {
-	mutRandr.Lock()
-	perm := randr.Perm(len(hosts))
-	mutRandr.Unlock()
 	shuffled := make([]*HostInfo, len(hosts))
+	copy(shuffled, hosts)
 
-	for i, host := range hosts {
-		shuffled[perm[i]] = host
-	}
+	mutRandr.Lock()
+	randr.Shuffle(len(hosts), func(i, j int) {
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	})
+	mutRandr.Unlock()
 
 	return shuffled
 }
@@ -166,15 +166,18 @@ func (c *controlConn) shuffleDial(endpoints []*HostInfo) (*Conn, error) {
 	// node.
 	shuffled := shuffleHosts(endpoints)
 
+	cfg := *c.session.connCfg
+	cfg.disableCoalesce = true
+
 	var err error
 	for _, host := range shuffled {
 		var conn *Conn
-		conn, err = c.session.connect(host, c)
+		conn, err = c.session.dial(c.session.ctx, host, &cfg, c)
 		if err == nil {
 			return conn, nil
 		}
 
-		Logger.Printf("gocql: unable to dial control conn %v: %v\n", host.ConnectAddress(), err)
+		Logger.Printf("gocql: unable to dial control conn %v:%v: %v\n", host.ConnectAddress(), host.Port(), err)
 	}
 
 	return nil, err
@@ -218,7 +221,7 @@ func (c *controlConn) discoverProtocol(hosts []*HostInfo) (int, error) {
 	var err error
 	for _, host := range hosts {
 		var conn *Conn
-		conn, err = c.session.dial(host, &connCfg, handler)
+		conn, err = c.session.dial(c.session.ctx, host, &connCfg, handler)
 		if conn != nil {
 			conn.Close()
 		}
@@ -271,7 +274,7 @@ func (c *controlConn) setupConn(conn *Conn) error {
 
 	// TODO(zariel): do we need to fetch host info everytime
 	// the control conn connects? Surely we have it cached?
-	host, err := conn.localHostInfo()
+	host, err := conn.localHostInfo(context.TODO())
 	if err != nil {
 		return err
 	}
@@ -282,8 +285,6 @@ func (c *controlConn) setupConn(conn *Conn) error {
 	}
 
 	c.conn.Store(ch)
-	c.session.handleNodeUp(host.ConnectAddress(), host.Port(), false)
-
 	return nil
 }
 
@@ -340,7 +341,7 @@ func (c *controlConn) reconnect(refreshring bool) {
 	var newConn *Conn
 	if host != nil {
 		// try to connect to the old host
-		conn, err := c.session.connect(host, c)
+		conn, err := c.session.connect(c.session.ctx, host, c)
 		if err != nil {
 			// host is dead
 			// TODO: this is replicated in a few places
@@ -362,7 +363,7 @@ func (c *controlConn) reconnect(refreshring bool) {
 		}
 
 		var err error
-		newConn, err = c.session.connect(host, c)
+		newConn, err = c.session.connect(c.session.ctx, host, c)
 		if err != nil {
 			// TODO: add log handler for things like this
 			return
@@ -386,7 +387,10 @@ func (c *controlConn) HandleError(conn *Conn, err error, closed bool) {
 	}
 
 	oldConn := c.getConn()
-	if oldConn.conn != conn {
+
+	// If connection has long gone, and not been attempted for awhile,
+	// it's possible to have oldConn as nil here (#1297).
+	if oldConn != nil && oldConn.conn != conn {
 		return
 	}
 
@@ -446,7 +450,9 @@ func (c *controlConn) query(statement string, values ...interface{}) (iter *Iter
 
 	for {
 		iter = c.withConn(func(conn *Conn) *Iter {
-			return conn.executeQuery(q)
+			// we want to keep the query on the control connection
+			q.conn = conn
+			return conn.executeQuery(context.TODO(), q)
 		})
 
 		if gocqlDebug && iter.err != nil {
@@ -464,7 +470,7 @@ func (c *controlConn) query(statement string, values ...interface{}) (iter *Iter
 
 func (c *controlConn) awaitSchemaAgreement() error {
 	return c.withConn(func(conn *Conn) *Iter {
-		return &Iter{err: conn.awaitSchemaAgreement()}
+		return &Iter{err: conn.awaitSchemaAgreement(context.TODO())}
 	}).err
 }
 

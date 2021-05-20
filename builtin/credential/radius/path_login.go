@@ -11,27 +11,27 @@ import (
 	"layeh.com/radius"
 	. "layeh.com/radius/rfc2865"
 
-	"github.com/hashicorp/vault/helper/policyutil"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/cidrutil"
+	"github.com/hashicorp/vault/sdk/helper/policyutil"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func pathLogin(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: "login" + framework.OptionalParamRegex("urlusername"),
 		Fields: map[string]*framework.FieldSchema{
-			"urlusername": &framework.FieldSchema{
+			"urlusername": {
 				Type:        framework.TypeString,
 				Description: "Username to be used for login. (URL parameter)",
 			},
 
-			"username": &framework.FieldSchema{
+			"username": {
 				Type:        framework.TypeString,
 				Description: "Username to be used for login. (POST request body)",
 			},
 
-			"password": &framework.FieldSchema{
+			"password": {
 				Type:        framework.TypeString,
 				Description: "Password for this user.",
 			},
@@ -63,6 +63,25 @@ func (b *backend) pathLoginAliasLookahead(ctx context.Context, req *logical.Requ
 }
 
 func (b *backend) pathLogin(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	cfg, err := b.Config(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return logical.ErrorResponse("radius backend not configured"), nil
+	}
+
+	// Check for a CIDR match.
+	if len(cfg.TokenBoundCIDRs) > 0 {
+		if req.Connection == nil {
+			b.Logger().Warn("token bound CIDRs found but no connection information available for validation")
+			return nil, logical.ErrPermissionDenied
+		}
+		if !cidrutil.RemoteAddrIsOk(req.Connection.RemoteAddr, cfg.TokenBoundCIDRs) {
+			return nil, logical.ErrPermissionDenied
+		}
+	}
+
 	username := d.Get("username").(string)
 	password := d.Get("password").(string)
 
@@ -75,14 +94,6 @@ func (b *backend) pathLogin(ctx context.Context, req *logical.Request, d *framew
 
 	if password == "" {
 		return logical.ErrorResponse("password cannot be empty"), nil
-	}
-
-	cfg, err := b.Config(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	if cfg == nil {
-		return logical.ErrorResponse("radius backend not configured"), nil
 	}
 
 	policies, resp, err := b.RadiusLogin(ctx, req, username, password)
@@ -111,16 +122,23 @@ func (b *backend) pathLogin(ctx context.Context, req *logical.Request, d *framew
 		},
 	}
 	cfg.PopulateTokenAuth(auth)
-	auth.Policies = append(auth.Policies, policies...)
-	auth.Policies = strutil.RemoveDuplicates(auth.Policies, false)
 
 	resp.Auth = auth
+	if policies != nil {
+		resp.Auth.Policies = append(resp.Auth.Policies, policies...)
+	}
 
 	return resp, nil
 }
 
 func (b *backend) pathLoginRenew(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	var err error
+	cfg, err := b.Config(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return logical.ErrorResponse("radius backend not configured"), nil
+	}
 
 	username := req.Auth.Metadata["username"]
 	password := req.Auth.InternalData["password"].(string)
@@ -132,16 +150,22 @@ func (b *backend) pathLoginRenew(ctx context.Context, req *logical.Request, d *f
 	if err != nil || (resp != nil && resp.IsError()) {
 		return resp, err
 	}
+	finalPolicies := cfg.TokenPolicies
+	if loginPolicies != nil {
+		finalPolicies = append(finalPolicies, loginPolicies...)
+	}
 
-	if !policyutil.EquivalentPolicies(loginPolicies, req.Auth.TokenPolicies) {
+	if !policyutil.EquivalentPolicies(finalPolicies, req.Auth.TokenPolicies) {
 		return nil, fmt.Errorf("policies have changed, not renewing")
 	}
 
+	req.Auth.Period = cfg.TokenPeriod
+	req.Auth.TTL = cfg.TokenTTL
+	req.Auth.MaxTTL = cfg.TokenMaxTTL
 	return &logical.Response{Auth: req.Auth}, nil
 }
 
 func (b *backend) RadiusLogin(ctx context.Context, req *logical.Request, username string, password string) ([]string, *logical.Response, error) {
-
 	cfg, err := b.Config(ctx, req)
 	if err != nil {
 		return nil, nil, err

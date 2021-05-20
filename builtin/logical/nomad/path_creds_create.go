@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/nomad/api"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 // maxTokenNameLength is the maximum length for the name of a Nomad access
@@ -19,7 +18,7 @@ func pathCredsCreate(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: "creds/" + framework.GenericNameRegex("name"),
 		Fields: map[string]*framework.FieldSchema{
-			"name": &framework.FieldSchema{
+			"name": {
 				Type:        framework.TypeString,
 				Description: "Name of the role",
 			},
@@ -42,7 +41,7 @@ func (b *backend) pathTokenRead(ctx context.Context, req *logical.Request, d *fr
 
 	role, err := b.Role(ctx, req.Storage, name)
 	if err != nil {
-		return nil, errwrap.Wrapf("error retrieving role: {{err}}", err)
+		return nil, fmt.Errorf("error retrieving role: %w", err)
 	}
 	if role == nil {
 		return logical.ErrorResponse(fmt.Sprintf("role %q not found", name)), nil

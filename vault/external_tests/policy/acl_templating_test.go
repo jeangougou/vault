@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/vault/api"
 	credUserpass "github.com/hashicorp/vault/builtin/credential/userpass"
 	vaulthttp "github.com/hashicorp/vault/http"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/vault"
 )
 
@@ -147,7 +147,7 @@ path "secret/{{ identity.groups.names.foobar.name}}/*" {
 	}
 	clientToken := secret.Auth.ClientToken
 
-	var tests = []struct {
+	tests := []struct {
 		name string
 		path string
 		fail bool

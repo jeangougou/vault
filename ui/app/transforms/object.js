@@ -1,18 +1,18 @@
-import $ from 'jquery';
-import DS from 'ember-data';
+import Transform from '@ember-data/serializer/transform';
+import { typeOf } from '@ember/utils';
 /*
   DS.attr('object')
 */
-export default DS.Transform.extend({
+export default Transform.extend({
   deserialize: function(value) {
-    if (!$.isPlainObject(value)) {
+    if (typeOf(value) !== 'object') {
       return {};
     } else {
       return value;
     }
   },
   serialize: function(value) {
-    if (!$.isPlainObject(value)) {
+    if (typeOf(value) !== 'object') {
       return {};
     } else {
       return value;

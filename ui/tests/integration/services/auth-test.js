@@ -1,5 +1,5 @@
 import { run } from '@ember/runloop';
-import { copy } from '@ember/object/internals';
+import { copy } from 'ember-copy';
 import { module, test } from 'qunit';
 import { setupTest } from 'ember-qunit';
 import { TOKEN_SEPARATOR, TOKEN_PREFIX, ROOT_PREFIX } from 'vault/services/auth';
@@ -205,8 +205,7 @@ module('Integration | Service | auth', function(hooks) {
     });
   });
 
-  test('token authentication: root token in ember development environment', function(assert) {
-    let done = assert.async();
+  test('token authentication: root token in ember development environment', async function(assert) {
     let self = this;
     let service = this.owner.factoryFor('service:auth').create({
       storage(tokenName) {
@@ -222,30 +221,26 @@ module('Integration | Service | auth', function(hooks) {
       },
       environment: () => 'development',
     });
-    run(() => {
-      service.authenticate({ clusterId: '1', backend: 'token', data: { token: 'test' } }).then(() => {
-        const clusterTokenName = service.get('currentTokenName');
-        const clusterToken = service.get('currentToken');
-        const authData = service.get('authData');
+    await service.authenticate({ clusterId: '1', backend: 'token', data: { token: 'test' } });
+    const clusterTokenName = service.get('currentTokenName');
+    const clusterToken = service.get('currentToken');
+    const authData = service.get('authData');
 
-        const expectedTokenName = `${TOKEN_PREFIX}${ROOT_PREFIX}${TOKEN_SEPARATOR}1`;
-        assert.equal('test', clusterToken, 'token is saved properly');
-        assert.equal(
-          `${TOKEN_PREFIX}${ROOT_PREFIX}${TOKEN_SEPARATOR}1`,
-          clusterTokenName,
-          'token name is saved properly'
-        );
-        assert.equal('token', authData.backend.type, 'backend is saved properly');
-        assert.equal(
-          ROOT_TOKEN_RESPONSE.data.display_name,
-          authData.displayName,
-          'displayName is saved properly'
-        );
-        assert.ok(this.store.keys().includes(expectedTokenName), 'root token is stored in the store');
-        assert.equal(this.memStore.keys().length, 0, 'mem storage is empty');
-        done();
-      });
-    });
+    const expectedTokenName = `${TOKEN_PREFIX}${ROOT_PREFIX}${TOKEN_SEPARATOR}1`;
+    assert.equal('test', clusterToken, 'token is saved properly');
+    assert.equal(
+      `${TOKEN_PREFIX}${ROOT_PREFIX}${TOKEN_SEPARATOR}1`,
+      clusterTokenName,
+      'token name is saved properly'
+    );
+    assert.equal('token', authData.backend.type, 'backend is saved properly');
+    assert.equal(
+      ROOT_TOKEN_RESPONSE.data.display_name,
+      authData.displayName,
+      'displayName is saved properly'
+    );
+    assert.ok(this.store.keys().includes(expectedTokenName), 'root token is stored in the store');
+    assert.equal(this.memStore.keys().length, 0, 'mem storage is empty');
   });
 
   test('github authentication', function(assert) {

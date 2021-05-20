@@ -2,25 +2,30 @@ package ssh
 
 import (
 	"context"
+	"crypto/dsa"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/vault/helper/certutil"
-	"github.com/hashicorp/vault/helper/parseutil"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/certutil"
+	"github.com/hashicorp/vault/sdk/helper/parseutil"
+	"github.com/hashicorp/vault/sdk/helper/strutil"
+	"github.com/hashicorp/vault/sdk/logical"
+	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
 )
 
 type creationBundle struct {
-	KeyId           string
+	KeyID           string
 	ValidPrincipals []string
 	PublicKey       ssh.PublicKey
 	CertificateType uint32
@@ -33,18 +38,18 @@ type creationBundle struct {
 
 func pathSign(b *backend) *framework.Path {
 	return &framework.Path{
-		Pattern: "sign/" + framework.GenericNameRegex("role"),
+		Pattern: "sign/" + framework.GenericNameWithAtRegex("role"),
 
 		Callbacks: map[logical.Operation]framework.OperationFunc{
 			logical.UpdateOperation: b.pathSign,
 		},
 
 		Fields: map[string]*framework.FieldSchema{
-			"role": &framework.FieldSchema{
+			"role": {
 				Type:        framework.TypeString,
 				Description: `The desired role with configuration for this request.`,
 			},
-			"ttl": &framework.FieldSchema{
+			"ttl": {
 				Type: framework.TypeDurationSecond,
 				Description: `The requested Time To Live for the SSH certificate;
 sets the expiration date. If not specified
@@ -52,28 +57,28 @@ the role default, backend default, or system
 default TTL is used, in that order. Cannot
 be later than the role max TTL.`,
 			},
-			"public_key": &framework.FieldSchema{
+			"public_key": {
 				Type:        framework.TypeString,
 				Description: `SSH public key that should be signed.`,
 			},
-			"valid_principals": &framework.FieldSchema{
+			"valid_principals": {
 				Type:        framework.TypeString,
 				Description: `Valid principals, either usernames or hostnames, that the certificate should be signed for.`,
 			},
-			"cert_type": &framework.FieldSchema{
+			"cert_type": {
 				Type:        framework.TypeString,
 				Description: `Type of certificate to be created; either "user" or "host".`,
 				Default:     "user",
 			},
-			"key_id": &framework.FieldSchema{
+			"key_id": {
 				Type:        framework.TypeString,
 				Description: `Key id that the created certificate should have. If not specified, the display name of the token will be used.`,
 			},
-			"critical_options": &framework.FieldSchema{
+			"critical_options": {
 				Type:        framework.TypeMap,
 				Description: `Critical options that the certificate should be signed for.`,
 			},
-			"extensions": &framework.FieldSchema{
+			"extensions": {
 				Type:        framework.TypeMap,
 				Description: `Extensions that the certificate should be signed for.`,
 			},
@@ -110,9 +115,14 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 		return logical.ErrorResponse(fmt.Sprintf("failed to parse public_key as SSH key: %s", err)), nil
 	}
 
+	err = b.validateSignedKeyRequirements(userPublicKey, role)
+	if err != nil {
+		return logical.ErrorResponse(fmt.Sprintf("public_key failed to meet the key requirements: %s", err)), nil
+	}
+
 	// Note that these various functions always return "user errors" so we pass
 	// them as 4xx values
-	keyId, err := b.calculateKeyId(data, req, role, userPublicKey)
+	keyID, err := b.calculateKeyID(data, req, role, userPublicKey)
 	if err != nil {
 		return logical.ErrorResponse(err.Error()), nil
 	}
@@ -124,12 +134,12 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 
 	var parsedPrincipals []string
 	if certificateType == ssh.HostCert {
-		parsedPrincipals, err = b.calculateValidPrincipals(data, "", role.AllowedDomains, validateValidPrincipalForHosts(role))
+		parsedPrincipals, err = b.calculateValidPrincipals(data, req, role, "", role.AllowedDomains, validateValidPrincipalForHosts(role))
 		if err != nil {
 			return logical.ErrorResponse(err.Error()), nil
 		}
 	} else {
-		parsedPrincipals, err = b.calculateValidPrincipals(data, role.DefaultUser, role.AllowedUsers, strutil.StrListContains)
+		parsedPrincipals, err = b.calculateValidPrincipals(data, req, role, role.DefaultUser, role.AllowedUsers, strutil.StrListContains)
 		if err != nil {
 			return logical.ErrorResponse(err.Error()), nil
 		}
@@ -145,14 +155,14 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 		return logical.ErrorResponse(err.Error()), nil
 	}
 
-	extensions, err := b.calculateExtensions(data, role)
+	extensions, err := b.calculateExtensions(data, req, role)
 	if err != nil {
 		return logical.ErrorResponse(err.Error()), nil
 	}
 
 	privateKeyEntry, err := caKey(ctx, req.Storage, caPrivateKey)
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to read CA private key: {{err}}", err)
+		return nil, fmt.Errorf("failed to read CA private key: %w", err)
 	}
 	if privateKeyEntry == nil || privateKeyEntry.Key == "" {
 		return nil, fmt.Errorf("failed to read CA private key")
@@ -160,11 +170,11 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 
 	signer, err := ssh.ParsePrivateKey([]byte(privateKeyEntry.Key))
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to parse stored CA private key: {{err}}", err)
+		return nil, fmt.Errorf("failed to parse stored CA private key: %w", err)
 	}
 
 	cBundle := creationBundle{
-		KeyId:           keyId,
+		KeyID:           keyID,
 		PublicKey:       userPublicKey,
 		Signer:          signer,
 		ValidPrincipals: parsedPrincipals,
@@ -195,7 +205,7 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 	return response, nil
 }
 
-func (b *backend) calculateValidPrincipals(data *framework.FieldData, defaultPrincipal, principalsAllowedByRole string, validatePrincipal func([]string, string) bool) ([]string, error) {
+func (b *backend) calculateValidPrincipals(data *framework.FieldData, req *logical.Request, role *sshRole, defaultPrincipal, principalsAllowedByRole string, validatePrincipal func([]string, string) bool) ([]string, error) {
 	validPrincipals := ""
 	validPrincipalsRaw, ok := data.GetOk("valid_principals")
 	if ok {
@@ -205,7 +215,33 @@ func (b *backend) calculateValidPrincipals(data *framework.FieldData, defaultPri
 	}
 
 	parsedPrincipals := strutil.RemoveDuplicates(strutil.ParseStringSlice(validPrincipals, ","), false)
-	allowedPrincipals := strutil.RemoveDuplicates(strutil.ParseStringSlice(principalsAllowedByRole, ","), false)
+	// Build list of allowed Principals from template and static principalsAllowedByRole
+	var allowedPrincipals []string
+	for _, principal := range strutil.RemoveDuplicates(strutil.ParseStringSlice(principalsAllowedByRole, ","), false) {
+		if role.AllowedUsersTemplate {
+			// Look for templating markers {{ .* }}
+			matched, _ := regexp.MatchString(`^{{.+?}}$`, principal)
+			if matched {
+				if req.EntityID != "" {
+					// Retrieve principal based on template + entityID from request.
+					templatePrincipal, err := framework.PopulateIdentityTemplate(principal, req.EntityID, b.System())
+					if err == nil {
+						// Template returned a principal
+						allowedPrincipals = append(allowedPrincipals, templatePrincipal)
+					} else {
+						return nil, fmt.Errorf("template '%s' could not be rendered -> %s", principal, err)
+					}
+				}
+			} else {
+				// Static principal or err template
+				allowedPrincipals = append(allowedPrincipals, principal)
+			}
+		} else {
+			// Static principal
+			allowedPrincipals = append(allowedPrincipals, principal)
+		}
+	}
+
 	switch {
 	case len(parsedPrincipals) == 0:
 		// There is nothing to process
@@ -213,7 +249,7 @@ func (b *backend) calculateValidPrincipals(data *framework.FieldData, defaultPri
 	case len(allowedPrincipals) == 0:
 		// User has requested principals to be set, but role is not configured
 		// with any principals
-		return nil, fmt.Errorf("role is not configured to allow any principles")
+		return nil, fmt.Errorf("role is not configured to allow any principals")
 	default:
 		// Role was explicitly configured to allow any principal.
 		if principalsAllowedByRole == "*" {
@@ -221,7 +257,7 @@ func (b *backend) calculateValidPrincipals(data *framework.FieldData, defaultPri
 		}
 
 		for _, principal := range parsedPrincipals {
-			if !validatePrincipal(allowedPrincipals, principal) {
+			if !validatePrincipal(strutil.RemoveDuplicates(allowedPrincipals, false), principal) {
 				return nil, fmt.Errorf("%v is not a valid value for valid_principals", principal)
 			}
 		}
@@ -266,14 +302,14 @@ func (b *backend) calculateCertificateType(data *framework.FieldData, role *sshR
 	return certificateType, nil
 }
 
-func (b *backend) calculateKeyId(data *framework.FieldData, req *logical.Request, role *sshRole, pubKey ssh.PublicKey) (string, error) {
-	reqId := data.Get("key_id").(string)
+func (b *backend) calculateKeyID(data *framework.FieldData, req *logical.Request, role *sshRole, pubKey ssh.PublicKey) (string, error) {
+	reqID := data.Get("key_id").(string)
 
-	if reqId != "" {
+	if reqID != "" {
 		if !role.AllowUserKeyIDs {
 			return "", fmt.Errorf("setting key_id is not allowed by role")
 		}
-		return reqId, nil
+		return reqID, nil
 	}
 
 	keyIDFormat := "vault-{{token_display_name}}-{{public_key_hash}}"
@@ -320,27 +356,51 @@ func (b *backend) calculateCriticalOptions(data *framework.FieldData, role *sshR
 	return criticalOptions, nil
 }
 
-func (b *backend) calculateExtensions(data *framework.FieldData, role *sshRole) (map[string]string, error) {
+func (b *backend) calculateExtensions(data *framework.FieldData, req *logical.Request, role *sshRole) (map[string]string, error) {
 	unparsedExtensions := data.Get("extensions").(map[string]interface{})
-	if len(unparsedExtensions) == 0 {
-		return role.DefaultExtensions, nil
-	}
+	extensions := make(map[string]string)
 
-	extensions := convertMapToStringValue(unparsedExtensions)
+	if len(unparsedExtensions) > 0 {
+		extensions := convertMapToStringValue(unparsedExtensions)
+		if role.AllowedExtensions != "" {
+			notAllowed := []string{}
+			allowedExtensions := strings.Split(role.AllowedExtensions, ",")
 
-	if role.AllowedExtensions != "" {
-		notAllowed := []string{}
-		allowedExtensions := strings.Split(role.AllowedExtensions, ",")
+			for extensionKey, _ := range extensions {
+				if !strutil.StrListContains(allowedExtensions, extensionKey) {
+					notAllowed = append(notAllowed, extensionKey)
+				}
+			}
 
-		for extension := range extensions {
-			if !strutil.StrListContains(allowedExtensions, extension) {
-				notAllowed = append(notAllowed, extension)
+			if len(notAllowed) != 0 {
+				return nil, fmt.Errorf("extensions %v are not on allowed list", notAllowed)
 			}
 		}
+		return extensions, nil
+	}
 
-		if len(notAllowed) != 0 {
-			return nil, fmt.Errorf("extensions %v are not on allowed list", notAllowed)
+	if role.DefaultExtensionsTemplate {
+		for extensionKey, extensionValue := range role.DefaultExtensions {
+			// Look for templating markers {{ .* }}
+			matched, _ := regexp.MatchString(`^{{.+?}}$`, extensionValue)
+			if matched {
+				if req.EntityID != "" {
+					// Retrieve extension value based on template + entityID from request.
+					templateExtensionValue, err := framework.PopulateIdentityTemplate(extensionValue, req.EntityID, b.System())
+					if err == nil {
+						// Template returned an extension value that we can use
+						extensions[extensionKey] = templateExtensionValue
+					} else {
+						return nil, fmt.Errorf("template '%s' could not be rendered -> %s", extensionValue, err)
+					}
+				}
+			} else {
+				// Static extension value or err template
+				extensions[extensionKey] = extensionValue
+			}
 		}
+	} else {
+		extensions = role.DefaultExtensions
 	}
 
 	return extensions, nil
@@ -384,6 +444,65 @@ func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.D
 	return ttl, nil
 }
 
+func (b *backend) validateSignedKeyRequirements(publickey ssh.PublicKey, role *sshRole) error {
+	if len(role.AllowedUserKeyLengths) != 0 {
+		var kstr string
+		var kbits int
+
+		switch k := publickey.(type) {
+		case ssh.CryptoPublicKey:
+			ff := k.CryptoPublicKey()
+			switch k := ff.(type) {
+			case *rsa.PublicKey:
+				kstr = "rsa"
+				kbits = k.N.BitLen()
+			case *dsa.PublicKey:
+				kstr = "dsa"
+				kbits = k.Parameters.P.BitLen()
+			case *ecdsa.PublicKey:
+				kstr = "ecdsa"
+				kbits = k.Curve.Params().BitSize
+			case ed25519.PublicKey:
+				kstr = "ed25519"
+			default:
+				return fmt.Errorf("public key type of %s is not allowed", kstr)
+			}
+		default:
+			return fmt.Errorf("pubkey not suitable for crypto (expected ssh.CryptoPublicKey but found %T)", k)
+		}
+
+		if value, ok := role.AllowedUserKeyLengths[kstr]; ok {
+			var pass bool
+			switch kstr {
+			case "rsa":
+				if kbits == value {
+					pass = true
+				}
+			case "dsa":
+				if kbits == value {
+					pass = true
+				}
+			case "ecdsa":
+				if kbits == value {
+					pass = true
+				}
+			case "ed25519":
+				// ed25519 public keys are always 256 bits in length,
+				// so there is no need to inspect their value
+				pass = true
+			}
+
+			if !pass {
+				return fmt.Errorf("key is of an invalid size: %v", kbits)
+			}
+
+		} else {
+			return fmt.Errorf("key type of %s is not allowed", kstr)
+		}
+	}
+	return nil
+}
+
 func (b *creationBundle) sign() (retCert *ssh.Certificate, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -402,10 +521,20 @@ func (b *creationBundle) sign() (retCert *ssh.Certificate, retErr error) {
 
 	now := time.Now()
 
+	sshAlgorithmSigner, ok := b.Signer.(ssh.AlgorithmSigner)
+	if !ok {
+		return nil, fmt.Errorf("failed to generate signed SSH key: signer is not an AlgorithmSigner")
+	}
+
+	// prepare certificate for signing
+	nonce := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate signed SSH key: error generating random nonce")
+	}
 	certificate := &ssh.Certificate{
 		Serial:          serialNumber.Uint64(),
 		Key:             b.PublicKey,
-		KeyId:           b.KeyId,
+		KeyId:           b.KeyID,
 		ValidPrincipals: b.ValidPrincipals,
 		ValidAfter:      uint64(now.Add(-30 * time.Second).In(time.UTC).Unix()),
 		ValidBefore:     uint64(now.Add(b.TTL).In(time.UTC).Unix()),
@@ -414,12 +543,22 @@ func (b *creationBundle) sign() (retCert *ssh.Certificate, retErr error) {
 			CriticalOptions: b.CriticalOptions,
 			Extensions:      b.Extensions,
 		},
+		Nonce:        nonce,
+		SignatureKey: sshAlgorithmSigner.PublicKey(),
 	}
 
-	err = certificate.SignCert(rand.Reader, b.Signer)
+	// get bytes to sign; this is based on Certificate.bytesForSigning() from the go ssh lib
+	out := certificate.Marshal()
+	// Drop trailing signature length.
+	certificateBytes := out[:len(out)-4]
+
+	algo := b.Role.AlgorithmSigner
+	sig, err := sshAlgorithmSigner.SignWithAlgorithm(rand.Reader, certificateBytes, algo)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate signed SSH key")
+		return nil, fmt.Errorf("failed to generate signed SSH key: sign error: %w", err)
 	}
+
+	certificate.Signature = sig
 
 	return certificate, nil
 }

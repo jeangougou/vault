@@ -15,20 +15,24 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	log "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-multierror"
 
 	metrics "github.com/armon/go-metrics"
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/physical"
+	"github.com/hashicorp/vault/sdk/helper/strutil"
+	"github.com/hashicorp/vault/sdk/physical"
 )
 
 // Verify MySQLBackend satisfies the correct interfaces
-var _ physical.Backend = (*MySQLBackend)(nil)
-var _ physical.HABackend = (*MySQLBackend)(nil)
-var _ physical.Lock = (*MySQLHALock)(nil)
+var (
+	_ physical.Backend   = (*MySQLBackend)(nil)
+	_ physical.HABackend = (*MySQLBackend)(nil)
+	_ physical.Lock      = (*MySQLHALock)(nil)
+)
 
 // Unreserved tls key
 // Reserved values are "true", "false", "skip-verify"
@@ -59,15 +63,21 @@ func NewMySQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 		return nil, err
 	}
 
-	database, ok := conf["database"]
-	if !ok {
+	database := conf["database"]
+	if database == "" {
 		database = "vault"
 	}
-	table, ok := conf["table"]
-	if !ok {
+	table := conf["table"]
+	if table == "" {
 		table = "vault"
 	}
-	dbTable := "`" + database + "`.`" + table + "`"
+
+	err = validateDBTable(database, table)
+	if err != nil {
+		return nil, err
+	}
+
+	dbTable := fmt.Sprintf("`%s`.`%s`", database, table)
 
 	maxParStr, ok := conf["max_parallel"]
 	var maxParInt int
@@ -95,7 +105,6 @@ func NewMySQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 	// Check table exists
 	var tableExist bool
 	tableRows, err := db.Query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = ? AND TABLE_SCHEMA = ?", table, database)
-
 	if err != nil {
 		return nil, errwrap.Wrapf("failed to check mysql table exist: {{err}}", err)
 	}
@@ -140,7 +149,6 @@ func NewMySQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 		// Check table exists
 		var lockTableExist bool
 		lockTableRows, err := db.Query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_NAME = ? AND TABLE_SCHEMA = ?", locktable, database)
-
 		if err != nil {
 			return nil, errwrap.Wrapf("failed to check mysql table exist: {{err}}", err)
 		}
@@ -191,6 +199,67 @@ func NewMySQLBackend(conf map[string]string, logger log.Logger) (physical.Backen
 	}
 
 	return m, nil
+}
+
+// validateDBTable to prevent SQL injection attacks. This ensures that the database and table names only have valid
+// characters in them. MySQL allows for more characters that this will allow, but there isn't an easy way of
+// representing the full Unicode Basic Multilingual Plane to check against.
+// https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func validateDBTable(db, table string) (err error) {
+	merr := &multierror.Error{}
+	merr = multierror.Append(merr, wrapErr("invalid database: %w", validate(db)))
+	merr = multierror.Append(merr, wrapErr("invalid table: %w", validate(table)))
+	return merr.ErrorOrNil()
+}
+
+func validate(name string) (err error) {
+	if name == "" {
+		return fmt.Errorf("missing name")
+	}
+	// From: https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+	// - Permitted characters in quoted identifiers include the full Unicode Basic Multilingual Plane (BMP), except U+0000:
+	//    ASCII: U+0001 .. U+007F
+	//    Extended: U+0080 .. U+FFFF
+	// - ASCII NUL (U+0000) and supplementary characters (U+10000 and higher) are not permitted in quoted or unquoted identifiers.
+	// - Identifiers may begin with a digit but unless quoted may not consist solely of digits.
+	// - Database, table, and column names cannot end with space characters.
+	//
+	// We are explicitly excluding all space characters (it's easier to deal with)
+	// The name will be quoted, so the all-digit requirement doesn't apply
+	runes := []rune(name)
+	validationErr := fmt.Errorf("invalid character found: can only include printable, non-space characters between [0x0001-0xFFFF]")
+	for _, r := range runes {
+		// U+0000 Explicitly disallowed
+		if r == 0x0000 {
+			return fmt.Errorf("invalid character: cannot include 0x0000")
+		}
+		// Cannot be above 0xFFFF
+		if r > 0xFFFF {
+			return fmt.Errorf("invalid character: cannot include any characters above 0xFFFF")
+		}
+		if r == '`' {
+			return fmt.Errorf("invalid character: cannot include '`' character")
+		}
+		if r == '\'' || r == '"' {
+			return fmt.Errorf("invalid character: cannot include quotes")
+		}
+		// We are excluding non-printable characters (not mentioned in the docs)
+		if !unicode.IsPrint(r) {
+			return validationErr
+		}
+		// We are excluding space characters (not mentioned in the docs)
+		if unicode.IsSpace(r) {
+			return validationErr
+		}
+	}
+	return nil
+}
+
+func wrapErr(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf(message, err)
 }
 
 func NewMySQLClient(conf map[string]string, logger log.Logger) (*sql.DB, error) {
@@ -251,13 +320,17 @@ func NewMySQLClient(conf map[string]string, logger log.Logger) (*sql.DB, error) 
 	}
 
 	dsnParams := url.Values{}
-	tlsCaFile, ok := conf["tls_ca_file"]
-	if ok {
+	tlsCaFile, tlsOk := conf["tls_ca_file"]
+	if tlsOk {
 		if err := setupMySQLTLSConfig(tlsCaFile); err != nil {
 			return nil, errwrap.Wrapf("failed register TLS config: {{err}}", err)
 		}
 
 		dsnParams.Add("tls", mysqlTLSKey)
+	}
+	ptAllowed, ptOk := conf["plaintext_connection_allowed"]
+	if !(ptOk && strings.ToLower(ptAllowed) == "true") && !tlsOk {
+		logger.Warn("No TLS specified, credentials will be sent in plaintext. To mute this warning add 'plaintext_connection_allowed' with a true value to your MySQL configuration in your config file.")
 	}
 
 	// Create MySQL handle for the database.
@@ -441,13 +514,13 @@ func (i *MySQLHALock) Lock(stopCh <-chan struct{}) (<-chan struct{}, error) {
 
 func (i *MySQLHALock) attemptLock(key, value string, didLock chan struct{}, failLock chan error, releaseCh chan bool) {
 	lock, err := NewMySQLLock(i.in, i.logger, key, value)
+	if err != nil {
+		failLock <- err
+		return
+	}
 
 	// Set node value
 	i.lock = lock
-
-	if err != nil {
-		failLock <- err
-	}
 
 	err = lock.Lock()
 	if err != nil {
@@ -561,8 +634,8 @@ var (
 	// ErrUnlockFailed
 	ErrUnlockFailed = errors.New("mysql: unable to release lock, already released or not held by this session")
 	// You were unable to update that you are the new leader in the DB
-	ErrClaimFailed = errors.New("mysql: unable to update DB with new leader infromation")
-	// Error to thow if inbetween getting the lock and checking the ID of it we lost it.
+	ErrClaimFailed = errors.New("mysql: unable to update DB with new leader information")
+	// Error to throw if between getting the lock and checking the ID of it we lost it.
 	ErrSettingGlobalID = errors.New("mysql: getting global lock id failed")
 )
 
@@ -639,7 +712,7 @@ func (i *MySQLLock) Lock() error {
 	}
 
 	// 1 is returned from GET_LOCK if it was able to get the lock
-	// 0 if it failed and NULL if some stange error happened.
+	// 0 if it failed and NULL if some strange error happened.
 	// https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_get-lock
 	if !lock.Valid || lock.Int64 != 1 {
 		return ErrLockHeld

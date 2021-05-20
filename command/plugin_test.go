@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/vault/api"
-	"github.com/hashicorp/vault/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/consts"
 )
 
 // testPluginDir creates a temporary directory suitable for holding plugins.
@@ -42,7 +42,7 @@ func testPluginCreate(tb testing.TB, dir, name string) (string, string) {
 	tb.Helper()
 
 	pth := dir + "/" + name
-	if err := ioutil.WriteFile(pth, nil, 0755); err != nil {
+	if err := ioutil.WriteFile(pth, nil, 0o755); err != nil {
 		tb.Fatal(err)
 	}
 

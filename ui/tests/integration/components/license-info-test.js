@@ -30,15 +30,19 @@ module('Integration | Component | license info', function(hooks) {
     assert.equal(component.hasSaveButton, true, 'it renders the save button');
     assert.equal(component.hasTextInput, true, 'it renders text input for new license');
     assert.equal(component.featureRows.length, FEATURES.length, 'it renders all of the features');
-    assert.equal(component.featureRows[0].featureName, 'HSM', 'it renders HSM feature');
-    assert.equal(component.featureRows[0].featureStatus, 'Active', 'it renders Active for HSM feature');
+    assert.equal(component.featureRows.objectAt(0).featureName, 'HSM', 'it renders HSM feature');
     assert.equal(
-      component.featureRows[1].featureName,
+      component.featureRows.objectAt(0).featureStatus,
+      'Active',
+      'it renders Active for HSM feature'
+    );
+    assert.equal(
+      component.featureRows.objectAt(1).featureName,
       'Performance Replication',
       'it renders Performance Replication feature name'
     );
     assert.equal(
-      component.featureRows[1].featureStatus,
+      component.featureRows.objectAt(1).featureStatus,
       'Not Active',
       'it renders Not Active for Performance Replication'
     );
@@ -104,7 +108,7 @@ module('Integration | Component | license info', function(hooks) {
     );
     await component.text('ABCDE12345');
     await component.saveButton();
-    assert.ok(this.get('saveModel').calledOnce);
+    assert.ok(this.saveModel.calledOnce);
   });
 
   test('it renders Performance Standby as inactive if count is 0', async function(assert) {

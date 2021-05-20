@@ -6,23 +6,30 @@ import (
 	"net/rpc"
 	"strings"
 	"sync"
+	"time"
 
 	log "github.com/hashicorp/go-hclog"
-
-	"github.com/hashicorp/errwrap"
-	uuid "github.com/hashicorp/go-uuid"
-	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
-	"github.com/hashicorp/vault/helper/strutil"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
-	"github.com/hashicorp/vault/plugins/helper/database/dbutil"
+	"github.com/hashicorp/go-uuid"
+	v4 "github.com/hashicorp/vault/sdk/database/dbplugin"
+	v5 "github.com/hashicorp/vault/sdk/database/dbplugin/v5"
+	"github.com/hashicorp/vault/sdk/database/helper/dbutil"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/helper/locksutil"
+	"github.com/hashicorp/vault/sdk/helper/strutil"
+	"github.com/hashicorp/vault/sdk/logical"
+	"github.com/hashicorp/vault/sdk/queue"
 )
 
-const databaseConfigPath = "database/config/"
+const (
+	databaseConfigPath     = "config/"
+	databaseRolePath       = "role/"
+	databaseStaticRolePath = "static-role/"
+	minRootCredRollbackAge = 1 * time.Minute
+)
 
 type dbPluginInstance struct {
 	sync.RWMutex
-	dbplugin.Database
+	database databaseVersionWrapper
 
 	id     string
 	name   string
@@ -38,7 +45,7 @@ func (dbi *dbPluginInstance) Close() error {
 	}
 	dbi.closed = true
 
-	return dbi.Database.Close()
+	return dbi.database.Close()
 }
 
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -46,6 +53,15 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	if err := b.Setup(ctx, conf); err != nil {
 		return nil, err
 	}
+
+	b.credRotationQueue = queue.New()
+	// Create a context with a cancel method for processing any WAL entries and
+	// populating the queue
+	initCtx := context.Background()
+	ictx, cancel := context.WithCancel(initCtx)
+	b.cancelQueue = cancel
+	// Load queue and kickoff new periodic ticker
+	go b.initQueue(ictx, conf, conf.System.ReplicationState())
 	return b, nil
 }
 
@@ -55,31 +71,41 @@ func Backend(conf *logical.BackendConfig) *databaseBackend {
 		Help: strings.TrimSpace(backendHelp),
 
 		PathsSpecial: &logical.Paths{
+			LocalStorage: []string{
+				framework.WALPrefix,
+			},
 			SealWrapStorage: []string{
 				"config/*",
+				"static-role/*",
 			},
 		},
-
-		Paths: []*framework.Path{
-			pathListPluginConnection(&b),
-			pathConfigurePluginConnection(&b),
+		Paths: framework.PathAppend(
+			[]*framework.Path{
+				pathListPluginConnection(&b),
+				pathConfigurePluginConnection(&b),
+				pathResetConnection(&b),
+			},
 			pathListRoles(&b),
 			pathRoles(&b),
 			pathCredsCreate(&b),
-			pathResetConnection(&b),
-			pathRotateCredentials(&b),
-		},
+			pathRotateRootCredentials(&b),
+		),
 
 		Secrets: []*framework.Secret{
 			secretCreds(&b),
 		},
-		Clean:       b.closeAllDBs,
-		Invalidate:  b.invalidate,
-		BackendType: logical.TypeLogical,
+		Clean:             b.clean,
+		Invalidate:        b.invalidate,
+		WALRollback:       b.walRollback,
+		WALRollbackMinAge: minRootCredRollbackAge,
+		BackendType:       logical.TypeLogical,
 	}
 
 	b.logger = conf.Logger
 	b.connections = make(map[string]*dbPluginInstance)
+
+	b.roleLocks = locksutil.CreateLocks()
+
 	return &b
 }
 
@@ -89,12 +115,26 @@ type databaseBackend struct {
 
 	*framework.Backend
 	sync.RWMutex
+	// CredRotationQueue is an in-memory priority queue used to track Static Roles
+	// that require periodic rotation. Backends will have a PriorityQueue
+	// initialized on setup, but only backends that are mounted by a primary
+	// server or mounted as a local mount will perform the rotations.
+	//
+	// cancelQueue is used to remove the priority queue and terminate the
+	// background ticker.
+	credRotationQueue *queue.PriorityQueue
+	cancelQueue       context.CancelFunc
+
+	// roleLocks is used to lock modifications to roles in the queue, to ensure
+	// concurrent requests are not modifying the same role and possibly causing
+	// issues with the priority queue.
+	roleLocks []*locksutil.LockEntry
 }
 
 func (b *databaseBackend) DatabaseConfig(ctx context.Context, s logical.Storage, name string) (*DatabaseConfig, error) {
 	entry, err := s.Get(ctx, fmt.Sprintf("config/%s", name))
 	if err != nil {
-		return nil, errwrap.Wrapf("failed to read connection configuration: {{err}}", err)
+		return nil, fmt.Errorf("failed to read connection configuration: %w", err)
 	}
 	if entry == nil {
 		return nil, fmt.Errorf("failed to find entry for connection with name: %q", name)
@@ -124,7 +164,15 @@ type upgradeCheck struct {
 }
 
 func (b *databaseBackend) Role(ctx context.Context, s logical.Storage, roleName string) (*roleEntry, error) {
-	entry, err := s.Get(ctx, "role/"+roleName)
+	return b.roleAtPath(ctx, s, roleName, databaseRolePath)
+}
+
+func (b *databaseBackend) StaticRole(ctx context.Context, s logical.Storage, roleName string) (*roleEntry, error) {
+	return b.roleAtPath(ctx, s, roleName, databaseStaticRolePath)
+}
+
+func (b *databaseBackend) roleAtPath(ctx context.Context, s logical.Storage, roleName string, pathPrefix string) (*roleEntry, error) {
+	entry, err := s.Get(ctx, pathPrefix+roleName)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +192,7 @@ func (b *databaseBackend) Role(ctx context.Context, s logical.Storage, roleName 
 
 	switch {
 	case upgradeCh.Statements != nil:
-		var stmts dbplugin.Statements
+		var stmts v4.Statements
 		if upgradeCh.Statements.CreationStatements != "" {
 			stmts.Creation = []string{upgradeCh.Statements.CreationStatements}
 		}
@@ -178,13 +226,22 @@ func (b *databaseBackend) invalidate(ctx context.Context, key string) {
 }
 
 func (b *databaseBackend) GetConnection(ctx context.Context, s logical.Storage, name string) (*dbPluginInstance, error) {
+	config, err := b.DatabaseConfig(ctx, s, name)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.GetConnectionWithConfig(ctx, name, config)
+}
+
+func (b *databaseBackend) GetConnectionWithConfig(ctx context.Context, name string, config *DatabaseConfig) (*dbPluginInstance, error) {
 	b.RLock()
 	unlockFunc := b.RUnlock
 	defer func() { unlockFunc() }()
 
-	db, ok := b.connections[name]
+	dbi, ok := b.connections[name]
 	if ok {
-		return db, nil
+		return dbi, nil
 	}
 
 	// Upgrade lock
@@ -192,25 +249,9 @@ func (b *databaseBackend) GetConnection(ctx context.Context, s logical.Storage, 
 	b.Lock()
 	unlockFunc = b.Unlock
 
-	db, ok = b.connections[name]
+	dbi, ok = b.connections[name]
 	if ok {
-		return db, nil
-	}
-
-	config, err := b.DatabaseConfig(ctx, s, name)
-	if err != nil {
-		return nil, err
-	}
-
-	dbp, err := dbplugin.PluginFactory(ctx, config.PluginName, b.System(), b.logger)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = dbp.Init(ctx, config.ConnectionDetails, true)
-	if err != nil {
-		dbp.Close()
-		return nil, err
+		return dbi, nil
 	}
 
 	id, err := uuid.GenerateUUID()
@@ -218,14 +259,39 @@ func (b *databaseBackend) GetConnection(ctx context.Context, s logical.Storage, 
 		return nil, err
 	}
 
-	db = &dbPluginInstance{
-		Database: dbp,
-		name:     name,
-		id:       id,
+	dbw, err := newDatabaseWrapper(ctx, config.PluginName, b.System(), b.logger)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create database instance: %w", err)
 	}
 
-	b.connections[name] = db
-	return db, nil
+	initReq := v5.InitializeRequest{
+		Config:           config.ConnectionDetails,
+		VerifyConnection: true,
+	}
+	_, err = dbw.Initialize(ctx, initReq)
+	if err != nil {
+		dbw.Close()
+		return nil, err
+	}
+
+	dbi = &dbPluginInstance{
+		database: dbw,
+		id:       id,
+		name:     name,
+	}
+	b.connections[name] = dbi
+	return dbi, nil
+}
+
+// invalidateQueue cancels any background queue loading and destroys the queue.
+func (b *databaseBackend) invalidateQueue() {
+	b.Lock()
+	defer b.Unlock()
+
+	if b.cancelQueue != nil {
+		b.cancelQueue()
+	}
+	b.credRotationQueue = nil
 }
 
 // ClearConnection closes the database connection and
@@ -249,7 +315,7 @@ func (b *databaseBackend) clearConnection(name string) error {
 func (b *databaseBackend) CloseIfShutdown(db *dbPluginInstance, err error) {
 	// Plugin has shutdown, close it so next call can reconnect.
 	switch err {
-	case rpc.ErrShutdown, dbplugin.ErrPluginShutdown:
+	case rpc.ErrShutdown, v4.ErrPluginShutdown:
 		// Put this in a goroutine so that requests can run with the read or write lock
 		// and simply defer the unlock.  Since we are attaching the instance and matching
 		// the id in the connection map, we can safely do this.
@@ -267,8 +333,13 @@ func (b *databaseBackend) CloseIfShutdown(db *dbPluginInstance, err error) {
 	}
 }
 
-// closeAllDBs closes all connections from all database types
-func (b *databaseBackend) closeAllDBs(ctx context.Context) {
+// clean closes all connections from all database types
+// and cancels any rotation queue loading operation.
+func (b *databaseBackend) clean(ctx context.Context) {
+	// invalidateQueue acquires it's own lock on the backend, removes queue, and
+	// terminates the background ticker
+	b.invalidateQueue()
+
 	b.Lock()
 	defer b.Unlock()
 

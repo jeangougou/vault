@@ -3,17 +3,15 @@ package audit
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"errors"
-
-	"fmt"
-
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/helper/salt"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/helper/salt"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func TestFormatJSONx_formatRequest(t *testing.T) {
@@ -26,6 +24,7 @@ func TestFormatJSONx_formatRequest(t *testing.T) {
 	}
 
 	fooSalted := salter.GetIdentifiedHMAC("foo")
+	issueTime, _ := time.Parse(time.RFC3339, "2020-05-28T13:40:18-05:00")
 
 	cases := map[string]struct {
 		Auth        *logical.Auth
@@ -40,13 +39,21 @@ func TestFormatJSONx_formatRequest(t *testing.T) {
 				ClientToken:     "foo",
 				Accessor:        "bar",
 				DisplayName:     "testtoken",
-				Policies:        []string{"root"},
+				EntityID:        "foobarentity",
 				NoDefaultPolicy: true,
+				Policies:        []string{"root"},
 				TokenType:       logical.TokenTypeService,
+				LeaseOptions: logical.LeaseOptions{
+					TTL:       time.Hour * 4,
+					IssueTime: issueTime,
+				},
 			},
 			&logical.Request{
-				Operation: logical.UpdateOperation,
-				Path:      "/foo",
+				ID:                  "request",
+				ClientToken:         "foo",
+				ClientTokenAccessor: "bar",
+				Operation:           logical.UpdateOperation,
+				Path:                "/foo",
 				Connection: &logical.Connection{
 					RemoteAddr: "127.0.0.1",
 				},
@@ -54,14 +61,15 @@ func TestFormatJSONx_formatRequest(t *testing.T) {
 					TTL: 60 * time.Second,
 				},
 				Headers: map[string][]string{
-					"foo": []string{"bar"},
+					"foo": {"bar"},
 				},
+				PolicyOverride: true,
 			},
 			errors.New("this is an error"),
 			"",
 			"",
-			fmt.Sprintf(`<json:object name="auth"><json:string name="accessor">bar</json:string><json:string name="client_token">%s</json:string><json:string name="display_name">testtoken</json:string><json:string name="entity_id"></json:string><json:null name="metadata" /><json:boolean name="no_default_policy">true</json:boolean><json:array name="policies"><json:string>root</json:string></json:array><json:string name="token_type">service</json:string></json:object><json:string name="error">this is an error</json:string><json:object name="request"><json:string name="client_token"></json:string><json:string name="client_token_accessor"></json:string><json:null name="data" /><json:object name="headers"><json:array name="foo"><json:string>bar</json:string></json:array></json:object><json:string name="id"></json:string><json:object name="namespace"><json:string name="id">root</json:string><json:string name="path"></json:string></json:object><json:string name="operation">update</json:string><json:string name="path">/foo</json:string><json:boolean name="policy_override">false</json:boolean><json:string name="remote_address">127.0.0.1</json:string><json:number name="wrap_ttl">60</json:number></json:object><json:string name="type">request</json:string>`,
-				fooSalted),
+			fmt.Sprintf(`<json:object name="auth"><json:string name="accessor">bar</json:string><json:string name="client_token">%s</json:string><json:string name="display_name">testtoken</json:string><json:string name="entity_id">foobarentity</json:string><json:boolean name="no_default_policy">true</json:boolean><json:array name="policies"><json:string>root</json:string></json:array><json:string name="token_issue_time">2020-05-28T13:40:18-05:00</json:string><json:number name="token_ttl">14400</json:number><json:string name="token_type">service</json:string></json:object><json:string name="error">this is an error</json:string><json:object name="request"><json:string name="client_token">%s</json:string><json:string name="client_token_accessor">bar</json:string><json:object name="headers"><json:array name="foo"><json:string>bar</json:string></json:array></json:object><json:string name="id">request</json:string><json:object name="namespace"><json:string name="id">root</json:string></json:object><json:string name="operation">update</json:string><json:string name="path">/foo</json:string><json:boolean name="policy_override">true</json:boolean><json:string name="remote_address">127.0.0.1</json:string><json:number name="wrap_ttl">60</json:number></json:object><json:string name="type">request</json:string>`,
+				fooSalted, fooSalted),
 		},
 		"auth, request with prefix": {
 			&logical.Auth{
@@ -69,12 +77,20 @@ func TestFormatJSONx_formatRequest(t *testing.T) {
 				Accessor:        "bar",
 				DisplayName:     "testtoken",
 				NoDefaultPolicy: true,
+				EntityID:        "foobarentity",
 				Policies:        []string{"root"},
 				TokenType:       logical.TokenTypeService,
+				LeaseOptions: logical.LeaseOptions{
+					TTL:       time.Hour * 4,
+					IssueTime: issueTime,
+				},
 			},
 			&logical.Request{
-				Operation: logical.UpdateOperation,
-				Path:      "/foo",
+				ID:                  "request",
+				ClientToken:         "foo",
+				ClientTokenAccessor: "bar",
+				Operation:           logical.UpdateOperation,
+				Path:                "/foo",
 				Connection: &logical.Connection{
 					RemoteAddr: "127.0.0.1",
 				},
@@ -82,14 +98,15 @@ func TestFormatJSONx_formatRequest(t *testing.T) {
 					TTL: 60 * time.Second,
 				},
 				Headers: map[string][]string{
-					"foo": []string{"bar"},
+					"foo": {"bar"},
 				},
+				PolicyOverride: true,
 			},
 			errors.New("this is an error"),
 			"",
 			"@cee: ",
-			fmt.Sprintf(`<json:object name="auth"><json:string name="accessor">bar</json:string><json:string name="client_token">%s</json:string><json:string name="display_name">testtoken</json:string><json:string name="entity_id"></json:string><json:null name="metadata" /><json:boolean name="no_default_policy">true</json:boolean><json:array name="policies"><json:string>root</json:string></json:array><json:string name="token_type">service</json:string></json:object><json:string name="error">this is an error</json:string><json:object name="request"><json:string name="client_token"></json:string><json:string name="client_token_accessor"></json:string><json:null name="data" /><json:object name="headers"><json:array name="foo"><json:string>bar</json:string></json:array></json:object><json:string name="id"></json:string><json:object name="namespace"><json:string name="id">root</json:string><json:string name="path"></json:string></json:object><json:string name="operation">update</json:string><json:string name="path">/foo</json:string><json:boolean name="policy_override">false</json:boolean><json:string name="remote_address">127.0.0.1</json:string><json:number name="wrap_ttl">60</json:number></json:object><json:string name="type">request</json:string>`,
-				fooSalted),
+			fmt.Sprintf(`<json:object name="auth"><json:string name="accessor">bar</json:string><json:string name="client_token">%s</json:string><json:string name="display_name">testtoken</json:string><json:string name="entity_id">foobarentity</json:string><json:boolean name="no_default_policy">true</json:boolean><json:array name="policies"><json:string>root</json:string></json:array><json:string name="token_issue_time">2020-05-28T13:40:18-05:00</json:string><json:number name="token_ttl">14400</json:number><json:string name="token_type">service</json:string></json:object><json:string name="error">this is an error</json:string><json:object name="request"><json:string name="client_token">%s</json:string><json:string name="client_token_accessor">bar</json:string><json:object name="headers"><json:array name="foo"><json:string>bar</json:string></json:array></json:object><json:string name="id">request</json:string><json:object name="namespace"><json:string name="id">root</json:string></json:object><json:string name="operation">update</json:string><json:string name="path">/foo</json:string><json:boolean name="policy_override">true</json:boolean><json:string name="remote_address">127.0.0.1</json:string><json:number name="wrap_ttl">60</json:number></json:object><json:string name="type">request</json:string>`,
+				fooSalted, fooSalted),
 		},
 	}
 
@@ -105,7 +122,7 @@ func TestFormatJSONx_formatRequest(t *testing.T) {
 			OmitTime:     true,
 			HMACAccessor: false,
 		}
-		in := &LogInput{
+		in := &logical.LogInput{
 			Auth:     tc.Auth,
 			Request:  tc.Req,
 			OuterErr: tc.Err,

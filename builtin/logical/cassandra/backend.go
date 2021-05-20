@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/gocql/gocql"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 // Factory creates a new backend
@@ -105,7 +105,6 @@ func (b *backend) DB(ctx context.Context, s logical.Storage) (*gocql.Session, er
 	b.session = session
 
 	return session, err
-
 }
 
 // ResetDB forces a connection next time DB() is called.

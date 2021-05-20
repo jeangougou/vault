@@ -3,15 +3,15 @@ package mfa
 import (
 	"context"
 
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func pathMFAConfig(b *backend) *framework.Path {
 	return &framework.Path{
 		Pattern: `mfa_config`,
 		Fields: map[string]*framework.FieldSchema{
-			"type": &framework.FieldSchema{
+			"type": {
 				Type:        framework.TypeString,
 				Description: "Enables MFA with given backend (available: duo)",
 			},

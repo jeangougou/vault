@@ -1,14 +1,6 @@
 <div class="field">
-  <label for="token" class="is-label">GitHub Token</label>
+  <label for="token" class="is-label">GitHub token</label>
   <div class="control">
-    {{input
-      type="password"
-      value=token
-      name="token"
-      id="token"
-      class="input"
-      data-test-token=true
-      autocomplete="off"
-    }}
+    <Input @type="password" @value={{token}} @name="token" @id="token" class="input" data-test-token={{true}} @autocomplete="off" @spellcheck="false" />
   </div>
 </div>

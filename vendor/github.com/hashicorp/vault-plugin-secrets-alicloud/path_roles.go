@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-uuid"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func (b *backend) pathListRoles() *framework.Path {
@@ -44,7 +44,7 @@ as a trusted actor.`,
 				Description: "JSON of policies to be dynamically applied to users of this role.",
 			},
 			"remote_policies": {
-				Type: framework.TypeCommaStringSlice,
+				Type: framework.TypeStringSlice,
 				Description: `The name and type of each remote policy to be applied. 
 Example: "name:AliyunRDSReadOnlyAccess,type:System".`,
 			},

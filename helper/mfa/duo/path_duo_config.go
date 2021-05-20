@@ -5,23 +5,23 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func pathDuoConfig() *framework.Path {
 	return &framework.Path{
 		Pattern: `duo/config`,
 		Fields: map[string]*framework.FieldSchema{
-			"user_agent": &framework.FieldSchema{
+			"user_agent": {
 				Type:        framework.TypeString,
 				Description: "User agent to connect to Duo (default \"\")",
 			},
-			"username_format": &framework.FieldSchema{
+			"username_format": {
 				Type:        framework.TypeString,
 				Description: "Format string given auth method username as argument to create Duo username (default '%s')",
 			},
-			"push_info": &framework.FieldSchema{
+			"push_info": {
 				Type:        framework.TypeString,
 				Description: "A string of URL-encoded key/value pairs that provides additional context about the authentication attempt in the Duo Mobile app",
 			},

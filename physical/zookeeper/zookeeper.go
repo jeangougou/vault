@@ -15,11 +15,11 @@ import (
 
 	"github.com/hashicorp/errwrap"
 	log "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/vault/helper/parseutil"
-	"github.com/hashicorp/vault/physical"
+	"github.com/hashicorp/vault/sdk/helper/parseutil"
+	"github.com/hashicorp/vault/sdk/physical"
 
 	metrics "github.com/armon/go-metrics"
-	"github.com/hashicorp/vault/helper/tlsutil"
+	"github.com/hashicorp/vault/sdk/helper/tlsutil"
 	"github.com/samuel/go-zookeeper/zk"
 )
 
@@ -32,9 +32,11 @@ const (
 )
 
 // Verify ZooKeeperBackend satisfies the correct interfaces
-var _ physical.Backend = (*ZooKeeperBackend)(nil)
-var _ physical.HABackend = (*ZooKeeperBackend)(nil)
-var _ physical.Lock = (*ZooKeeperHALock)(nil)
+var (
+	_ physical.Backend   = (*ZooKeeperBackend)(nil)
+	_ physical.HABackend = (*ZooKeeperBackend)(nil)
+	_ physical.Lock      = (*ZooKeeperHALock)(nil)
+)
 
 // ZooKeeperBackend is a physical backend that stores data at specific
 // prefix within ZooKeeper. It is used in production situations as

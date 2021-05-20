@@ -2,13 +2,12 @@ package http
 
 import (
 	"io/ioutil"
-
 	"net/http"
 	"net/url"
 	"reflect"
 	"testing"
 
-	"github.com/hashicorp/vault/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/consts"
 	"github.com/hashicorp/vault/vault"
 )
 
@@ -45,6 +44,7 @@ func TestSysHealth_get(t *testing.T) {
 	} else {
 		expected["cluster_id"] = actual["cluster_id"]
 	}
+	delete(actual, "license")
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("bad: expected:%#v\nactual:%#v", expected, actual)
 	}
@@ -78,6 +78,7 @@ func TestSysHealth_get(t *testing.T) {
 	} else {
 		expected["cluster_id"] = actual["cluster_id"]
 	}
+	delete(actual, "license")
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("bad: expected:%#v\nactual:%#v", expected, actual)
 	}
@@ -115,10 +116,10 @@ func TestSysHealth_get(t *testing.T) {
 	} else {
 		expected["cluster_id"] = actual["cluster_id"]
 	}
+	delete(actual, "license")
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("bad: expected:%#v\nactual:%#v", expected, actual)
 	}
-
 }
 
 func TestSysHealth_customcodes(t *testing.T) {
@@ -159,6 +160,7 @@ func TestSysHealth_customcodes(t *testing.T) {
 	} else {
 		expected["cluster_id"] = actual["cluster_id"]
 	}
+	delete(actual, "license")
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("bad: expected:%#v\nactual:%#v", expected, actual)
 	}
@@ -193,6 +195,7 @@ func TestSysHealth_customcodes(t *testing.T) {
 	} else {
 		expected["cluster_id"] = actual["cluster_id"]
 	}
+	delete(actual, "license")
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("bad: expected:%#v\nactual:%#v", expected, actual)
 	}
@@ -230,6 +233,7 @@ func TestSysHealth_customcodes(t *testing.T) {
 	} else {
 		expected["cluster_id"] = actual["cluster_id"]
 	}
+	delete(actual, "license")
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("bad: expected:%#v\nactual:%#v", expected, actual)
 	}

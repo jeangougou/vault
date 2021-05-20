@@ -11,8 +11,11 @@ export default create({
   confirmBtn: clickable('[data-test-confirm-button]'),
   visitEdit: visitable('/vault/secrets/:backend/edit/:id'),
   visitEditRoot: visitable('/vault/secrets/:backend/edit'),
-  toggleJSON: clickable('[data-test-secret-json-toggle]'),
+  toggleJSON: clickable('[data-test-toggle-input="json"]'),
   hasMetadataFields: isPresent('[data-test-metadata-fields]'),
+  showsNoCASWarning: isPresent('[data-test-v2-no-cas-warning]'),
+  showsV2WriteWarning: isPresent('[data-test-v2-write-without-read]'),
+  showsV1WriteWarning: isPresent('[data-test-v1-write-without-read]'),
   editor: {
     fillIn: codeFillable('[data-test-component="json-editor"]'),
   },

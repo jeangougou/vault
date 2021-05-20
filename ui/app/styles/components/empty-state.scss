@@ -1,8 +1,8 @@
 .empty-state {
   align-items: center;
   color: $grey;
+  background: $ui-gray-010;
   display: flex;
-  background: $ui-gray-050;
   justify-content: center;
   padding: $spacing-xxl $spacing-s;
   box-shadow: 0 -2px 0 -1px $ui-gray-300;
@@ -20,6 +20,16 @@
   margin-bottom: $spacing-xs;
 }
 
+.empty-state-subTitle {
+  font-size: $size-7;
+  margin-top: -10px;
+  padding-bottom: $spacing-s;
+}
+
+.empty-state-message.has-border-bottom-light {
+  padding-bottom: $spacing-s;
+}
+
 .empty-state-actions {
   margin-top: $spacing-xs;
 
@@ -35,4 +45,9 @@
   > * + * {
     margin-left: $spacing-s;
   }
+}
+
+.empty-state-icon > .hs-icon {
+  float: left;
+  margin-right: $spacing-xs;
 }

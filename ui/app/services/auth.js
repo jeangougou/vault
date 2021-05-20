@@ -1,9 +1,10 @@
 import Ember from 'ember';
-import { resolve } from 'rsvp';
+import { resolve, reject } from 'rsvp';
 import { assign } from '@ember/polyfills';
-import $ from 'jquery';
 import { isArray } from '@ember/array';
 import { computed, get } from '@ember/object';
+
+import fetch from 'fetch';
 import { getOwner } from '@ember/application';
 import Service, { inject as service } from '@ember/service';
 import getStorage from '../lib/token-storage';
@@ -12,14 +13,14 @@ import { supportedAuthBackends } from 'vault/helpers/supported-auth-backends';
 import { task, timeout } from 'ember-concurrency';
 const TOKEN_SEPARATOR = '☃';
 const TOKEN_PREFIX = 'vault-';
-const ROOT_PREFIX = '🗝';
+const ROOT_PREFIX = '_root_';
 const BACKENDS = supportedAuthBackends();
 
 export { TOKEN_SEPARATOR, TOKEN_PREFIX, ROOT_PREFIX };
 
 export default Service.extend({
   permissions: service(),
-  namespace: service(),
+  namespaceService: service('namespace'),
   IDLE_TIMEOUT: 3 * 60e3,
   expirationCalcTS: null,
   init() {
@@ -77,26 +78,38 @@ export default Service.extend({
       method,
       dataType: 'json',
       headers: {
-        'X-Vault-Token': this.get('currentToken'),
+        'X-Vault-Token': this.currentToken,
       },
     };
 
-    let namespace =
-      typeof options.namespace === 'undefined' ? this.get('namespaceService.path') : options.namespace;
+    let namespace = typeof options.namespace === 'undefined' ? this.namespaceService.path : options.namespace;
     if (namespace) {
       defaults.headers['X-Vault-Namespace'] = namespace;
     }
-    return $.ajax(assign(defaults, options));
+    let opts = assign(defaults, options);
+
+    return fetch(url, {
+      method: opts.method || 'GET',
+      headers: opts.headers || {},
+    }).then(response => {
+      if (response.status === 204) {
+        return resolve();
+      } else if (response.status >= 200 && response.status < 300) {
+        return resolve(response.json());
+      } else {
+        return reject();
+      }
+    });
   },
 
   renewCurrentToken() {
-    let namespace = this.get('authData.userRootNamespace');
+    let namespace = this.authData.userRootNamespace;
     const url = '/v1/auth/token/renew-self';
     return this.ajax(url, 'POST', { namespace });
   },
 
   revokeCurrentToken() {
-    let namespace = this.get('authData.userRootNamespace');
+    let namespace = this.authData.userRootNamespace;
     const url = '/v1/auth/token/revoke-self';
     return this.ajax(url, 'POST', { namespace });
   },
@@ -114,8 +127,8 @@ export default Service.extend({
 
   persistAuthData() {
     let [firstArg, resp] = arguments;
-    let tokens = this.get('tokens');
-    let currentNamespace = this.get('namespace.path') || '';
+    let tokens = this.tokens;
+    let currentNamespace = this.namespaceService.path || '';
     let tokenName;
     let options;
     let backend;
@@ -148,7 +161,9 @@ export default Service.extend({
       userRootNamespace = '';
     }
     if (typeof userRootNamespace === 'undefined') {
-      userRootNamespace = this.get('authData.userRootNamespace');
+      if (this.authData) {
+        userRootNamespace = this.authData.userRootNamespace;
+      }
     }
     if (typeof userRootNamespace === 'undefined') {
       userRootNamespace = currentNamespace;
@@ -166,7 +181,7 @@ export default Service.extend({
     tokenName = this.generateTokenName(
       {
         backend,
-        clusterId: (options && options.clusterId) || this.get('activeCluster'),
+        clusterId: (options && options.clusterId) || this.activeCluster,
       },
       resp.policies
     );
@@ -176,7 +191,7 @@ export default Service.extend({
     }
 
     if (!data.displayName) {
-      data.displayName = get(this.getTokenData(tokenName) || {}, 'displayName');
+      data.displayName = (this.getTokenData(tokenName) || {}).displayName;
     }
     tokens.addObject(tokenName);
     this.set('tokens', tokens);
@@ -202,7 +217,7 @@ export default Service.extend({
   },
 
   tokenExpirationDate: computed('currentTokenName', 'expirationCalcTS', function() {
-    const tokenName = this.get('currentTokenName');
+    const tokenName = this.currentTokenName;
     if (!tokenName) {
       return;
     }
@@ -211,13 +226,13 @@ export default Service.extend({
     return tokenExpirationEpoch ? expirationDate.setUTCMilliseconds(tokenExpirationEpoch) : null;
   }),
 
-  tokenExpired: computed(function() {
-    const expiration = this.get('tokenExpirationDate');
+  get tokenExpired() {
+    const expiration = this.tokenExpirationDate;
     return expiration ? this.now() >= expiration : null;
-  }).volatile(),
+  },
 
   renewAfterEpoch: computed('currentTokenName', 'expirationCalcTS', function() {
-    const tokenName = this.get('currentTokenName');
+    const tokenName = this.currentTokenName;
     let { expirationCalcTS } = this;
     const data = this.getTokenData(tokenName);
     if (!tokenName || !data || !expirationCalcTS) {
@@ -229,8 +244,8 @@ export default Service.extend({
   }),
 
   renew() {
-    const tokenName = this.get('currentTokenName');
-    const currentlyRenewing = this.get('isRenewing');
+    const tokenName = this.currentTokenName;
+    const currentlyRenewing = this.isRenewing;
     if (currentlyRenewing) {
       return;
     }
@@ -260,9 +275,9 @@ export default Service.extend({
   }).on('init'),
   shouldRenew() {
     const now = this.now();
-    const lastFetch = this.get('lastFetch');
-    const renewTime = this.get('renewAfterEpoch');
-    if (!this.currentTokenName || this.get('tokenExpired') || this.get('allowExpiration') || !renewTime) {
+    const lastFetch = this.lastFetch;
+    const renewTime = this.renewAfterEpoch;
+    if (!this.currentTokenName || this.tokenExpired || this.allowExpiration || !renewTime) {
       return false;
     }
     if (lastFetch && now - lastFetch >= this.IDLE_TIMEOUT) {
@@ -296,57 +311,57 @@ export default Service.extend({
     if (this.environment() === 'development') {
       return;
     }
+
     this.getTokensFromStorage().forEach(key => {
       const data = this.getTokenData(key);
-      if (data.policies.includes('root')) {
+      if (data && data.policies && data.policies.includes('root')) {
         this.removeTokenData(key);
       }
     });
   },
 
-  authenticate(/*{clusterId, backend, data}*/) {
+  async authenticate(/*{clusterId, backend, data}*/) {
     const [options] = arguments;
     const adapter = this.clusterAdapter();
 
-    return adapter.authenticate(options).then(resp => {
-      return this.persistAuthData(options, resp.auth || resp.data, this.get('namespace.path')).then(
-        authData => {
-          return this.get('permissions')
-            .getPaths.perform()
-            .then(() => {
-              return authData;
-            });
-        }
-      );
-    });
+    let resp = await adapter.authenticate(options);
+    let authData = await this.persistAuthData(options, resp.auth || resp.data, this.namespaceService.path);
+    await this.permissions.getPaths.perform();
+    return authData;
+  },
+
+  getAuthType() {
+    if (!this.authData) return;
+    return this.authData.backend.type;
   },
 
   deleteCurrentToken() {
-    const tokenName = this.get('currentTokenName');
+    const tokenName = this.currentTokenName;
     this.deleteToken(tokenName);
     this.removeTokenData(tokenName);
   },
 
   deleteToken(tokenName) {
-    const tokenNames = this.get('tokens').without(tokenName);
+    const tokenNames = this.tokens.without(tokenName);
     this.removeTokenData(tokenName);
     this.set('tokens', tokenNames);
   },
 
   // returns the key for the token to use
   currentTokenName: computed('activeCluster', 'tokens', 'tokens.[]', function() {
-    const regex = new RegExp(this.get('activeCluster'));
-    return this.get('tokens').find(key => regex.test(key));
+    const regex = new RegExp(this.activeCluster);
+    return this.tokens.find(key => regex.test(key));
   }),
 
   currentToken: computed('currentTokenName', function() {
-    const name = this.get('currentTokenName');
+    const name = this.currentTokenName;
     const data = name && this.getTokenData(name);
+    // data.token is undefined so that's why it returns current token undefined
     return name && data ? data.token : null;
   }),
 
   authData: computed('currentTokenName', function() {
-    const token = this.get('currentTokenName');
+    const token = this.currentTokenName;
     if (!token) {
       return;
     }

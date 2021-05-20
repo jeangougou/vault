@@ -22,7 +22,7 @@ func (c *SecretsClient) Get(conf *client.ADConf, serviceAccountName string) (*cl
 		client.FieldRegistry.UserPrincipalName: {serviceAccountName},
 	}
 
-	entries, err := c.adClient.Search(conf, filters)
+	entries, err := c.adClient.Search(conf, conf.UserDN, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func (c *SecretsClient) Get(conf *client.ADConf, serviceAccountName string) (*cl
 		return nil, fmt.Errorf("unable to find service account named %s in active directory, searches are case sensitive", serviceAccountName)
 	}
 	if len(entries) > 1 {
-		return nil, fmt.Errorf("expected one matching service account, but received %s", entries)
+		return nil, fmt.Errorf("expected one matching service account, but received %+v", entries)
 	}
 	return entries[0], nil
 }
@@ -68,12 +68,18 @@ func (c *SecretsClient) UpdatePassword(conf *client.ADConf, serviceAccountName s
 	filters := map[*client.Field][]string{
 		client.FieldRegistry.UserPrincipalName: {serviceAccountName},
 	}
-	return c.adClient.UpdatePassword(conf, filters, newPassword)
+	return c.adClient.UpdatePassword(conf, conf.UserDN, filters, newPassword)
 }
 
 func (c *SecretsClient) UpdateRootPassword(conf *client.ADConf, bindDN string, newPassword string) error {
 	filters := map[*client.Field][]string{
 		client.FieldRegistry.DistinguishedName: {bindDN},
 	}
-	return c.adClient.UpdatePassword(conf, filters, newPassword)
+	// Here, use the binddn as the base for the search tree, since it actually may live
+	// in a separate location from the users it's managing. For example, suppose the root
+	// user was in a "Security" OU, while the users whose passwords were being managed were
+	// in a separate, non-overlapping "Accounting" OU. We wouldn't want to search the
+	// accounting team to rotate the security user's password, we'd want to search the
+	// security team.
+	return c.adClient.UpdatePassword(conf, conf.BindDN, filters, newPassword)
 }

@@ -11,10 +11,10 @@ import (
 
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/builtin/logical/transit"
-	"github.com/hashicorp/vault/helper/consts"
 	"github.com/hashicorp/vault/helper/forwarding"
-	"github.com/hashicorp/vault/helper/logging"
-	"github.com/hashicorp/vault/logical"
+	"github.com/hashicorp/vault/sdk/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/logging"
+	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/vault"
 	"golang.org/x/net/http2"
 )
@@ -84,7 +84,7 @@ func BenchmarkHTTP_Forwarding_Stress(b *testing.B) {
 		default:
 			b.Fatalf("bad status code: %d, resp: %s", w.StatusCode(), w.Body().String())
 		}
-		//b.Log(w.Body().String())
+		// b.Log(w.Body().String())
 		numOps++
 	}
 

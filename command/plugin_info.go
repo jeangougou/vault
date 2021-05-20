@@ -5,13 +5,15 @@ import (
 	"strings"
 
 	"github.com/hashicorp/vault/api"
-	"github.com/hashicorp/vault/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/consts"
 	"github.com/mitchellh/cli"
 	"github.com/posener/complete"
 )
 
-var _ cli.Command = (*PluginInfoCommand)(nil)
-var _ cli.CommandAutocomplete = (*PluginInfoCommand)(nil)
+var (
+	_ cli.Command             = (*PluginInfoCommand)(nil)
+	_ cli.CommandAutocomplete = (*PluginInfoCommand)(nil)
+)
 
 type PluginInfoCommand struct {
 	*BaseCommand
